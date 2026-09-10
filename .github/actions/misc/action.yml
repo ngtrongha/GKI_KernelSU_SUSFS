@@ -29,4 +29,6 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
-          
+          CONFIG_HZ_250=n
+          CONFIG_HZ_300=y
+          CONFIG_HZ=300

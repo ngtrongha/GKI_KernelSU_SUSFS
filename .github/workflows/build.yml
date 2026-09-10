@@ -72,6 +72,18 @@ on:
         required: false
         type: boolean
         default: true
+      lto:
+        required: false
+        type: string
+        default: "thin"
+      arm_tune:
+        required: false
+        type: string
+        default: "generic"
+      enable_bore:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-gki:
@@ -310,6 +322,12 @@ jobs:
     - name: Setup Misc Configs
       uses: ./.github/actions/misc
 
+    - name: Apply BORE Scheduler Patch
+      if: inputs.enable_bore && inputs.kernel_version == '6.1'
+      uses: ./.github/actions/bore
+      with:
+        kernel_version: ${{ inputs.kernel_version }}
+
     - name: Enable BPF Stack (BTF + eBPF + FUSE-BPF)
       if: contains(inputs.feature_set, 'BPF')
       uses: ./.github/actions/btf
@@ -466,6 +484,8 @@ jobs:
       uses: ./.github/actions/build-kernel
       with:
         version: ${{ inputs.version }}
+        lto: ${{ inputs.lto }}
+        arm_tune: ${{ inputs.arm_tune }}
 
     - name: Get Cache Stats
       uses: ./.github/actions/cache-stats

@@ -76,6 +76,21 @@ on:
         required: false
         type: string
         default: ""
+      lto:
+        description: "LTO mode (thin or full)"
+        required: false
+        type: string
+        default: "thin"
+      arm_tune:
+        description: "ARM architecture tuning (generic or armv9.2-a)"
+        required: false
+        type: string
+        default: "generic"
+      enable_bore:
+        description: "Enable BORE Scheduler for 6.1"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   generate-matrix:
@@ -183,4 +198,7 @@ jobs:
       brand_name: ${{ inputs.brand_name }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.enable_bore }}
     secrets: inherit

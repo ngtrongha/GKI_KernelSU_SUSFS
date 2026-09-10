@@ -103,6 +103,24 @@ on:
         description: "Performance"
         type: boolean
         default: false
+      use_bore:
+        description: "BORE Scheduler (6.1 only)"
+        type: boolean
+        default: false
+      lto_mode:
+        description: "LTO Mode"
+        type: choice
+        options:
+          - thin
+          - full
+        default: thin
+      arm_tune:
+        description: "ARM Architecture Tuning"
+        type: choice
+        options:
+          - generic
+          - armv9.2-a
+        default: generic
       test_release_notes:
         description: "Render release notes preview only (skip all builds + release)"
         type: boolean
@@ -640,6 +658,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android13-5-10:
@@ -669,6 +690,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android13-5-15:
@@ -698,6 +722,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android14-5-15:
@@ -727,6 +754,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android14-6-1:
@@ -756,6 +786,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android15-6-6:
@@ -785,6 +818,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android16-6-12:
@@ -814,6 +850,9 @@ jobs:
       os_patch_level: ${{ inputs.os_patch_level }}
       bypass: ${{ inputs.bypass }}
       use_cache: ${{ inputs.use_cache }}
+      lto: ${{ inputs.lto_mode }}
+      arm_tune: ${{ inputs.arm_tune }}
+      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   update-verified-pins:

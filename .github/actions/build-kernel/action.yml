@@ -4,6 +4,14 @@ inputs:
   version:
     description: 'Kernel config version (e.g., android14-6.1)'
     required: true
+  lto:
+    description: 'LTO mode (thin or full)'
+    required: false
+    default: 'thin'
+  arm_tune:
+    description: 'ARM architecture tuning (generic or armv9.2-a)'
+    required: false
+    default: 'generic'
 
 runs:
   using: composite
@@ -17,6 +25,15 @@ runs:
     working-directory: ${{ github.workspace }}/kernel
     run: |
       sed -i 's/check_defconfig//' ./common/build.config.gki
+      LTO_PARAM="${{ inputs.lto }}"
+      [ -z "$LTO_PARAM" ] && LTO_PARAM="thin"
+
+      KCFLAGS_PARAM=""
+      if [ "${{ inputs.arm_tune }}" = "armv9.2-a" ] || [ "${{ inputs.arm_tune }}" = "armv9" ]; then
+        echo "[*] Applying ARMv9.2-a / Cortex-X4 tuning (Xiaomi 14 / SM8650)..."
+        KCFLAGS_PARAM="-march=armv9.2-a+crypto -mcpu=cortex-x4"
+      fi
+
       if [ -f "build/build.sh" ]; then
         BUILD_GKI_ARTIFACTS="" \
         BUILD_GKI_CERTIFICATION_TOOLS=0 \
@@ -25,7 +42,9 @@ runs:
         SKIP_EXT_MODULES=1 \
         SKIP_CP_KERNEL_HDR=1 \
         OUT_DIR="/home/runner/out" \
-        LTO=thin \
+        LTO="$LTO_PARAM" \
+        KCFLAGS="$KCFLAGS_PARAM" \
+        EXTRA_CFLAGS="$KCFLAGS_PARAM" \
         BUILD_CONFIG=common/build.config.gki.aarch64 \
         CC="/usr/bin/ccache clang" \
         CXX="/usr/bin/ccache clang++" \
@@ -34,8 +53,17 @@ runs:
         build/build.sh -j"$(nproc)"
       else
         sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
+        BAZEL_FLAGS=()
+        if [ "$LTO_PARAM" = "full" ]; then
+          BAZEL_FLAGS+=( "--lto=full" )
+        else
+          BAZEL_FLAGS+=( "--config=fast" )
+        fi
+        if [ -n "$KCFLAGS_PARAM" ]; then
+          BAZEL_FLAGS+=( "--copt=-march=armv9.2-a+crypto" "--copt=-mcpu=cortex-x4" )
+        fi
         tools/bazel build \
-          --config=fast \
+          "${BAZEL_FLAGS[@]}" \
           --disk_cache=/home/runner/.cache/bazel \
           //common:kernel_aarch64/Image
       fi
