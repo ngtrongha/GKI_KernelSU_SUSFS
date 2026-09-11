@@ -22,25 +22,25 @@ on:
       bypass:
         description: "Apply kernel version-check bypass hack"
         type: boolean
-        default: false
+        default: true
       kernel_build_version:
         description: "Kernel Version"
         type: choice
         options:
+          - 6.1.x-android14
           - All
           - 5.10.x-android12
           - 5.10.x-android13
           - 5.15.x-android13
           - 5.15.x-android14
-          - 6.1.x-android14
           - 6.6.x-android15
           - 6.12.x-android16
-        default: All
+        default: 6.1.x-android14
       os_patch_level:
         description: "Patch date (YYYY-MM), kernel sublevel, lts, or All (no filter)"
         required: true
         type: string
-        default: All
+        default: "138"
       brand_name:
         description: "Kernel Branding"
         type: string
@@ -62,7 +62,7 @@ on:
           - KernelSU
           - ReSukiSU
           - All
-        default: All
+        default: KernelSU-Next
       use_susfs:
         description: "SUSFS"
         type: boolean
@@ -114,9 +114,9 @@ on:
         description: "ARM Architecture Tuning"
         type: choice
         options:
-          - generic
           - armv9.2-a
-        default: generic
+          - generic
+        default: armv9.2-a
       test_release_notes:
         description: "Render release notes preview only (skip all builds + release)"
         type: boolean

@@ -36,3 +36,8 @@ runs:
           CONFIG_HZ_250=n
           CONFIG_HZ_300=y
           CONFIG_HZ=300
+          CONFIG_MQ_IOSCHED_DEADLINE=y
+          CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_F2FS_FS_COMPRESSION=y
+          CONFIG_F2FS_FS_LZ4=y
+          CONFIG_F2FS_FS_ZSTD=y
