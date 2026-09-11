@@ -30,8 +30,8 @@ runs:
 
       KCFLAGS_PARAM=""
       if [ "${{ inputs.arm_tune }}" = "armv9.2-a" ] || [ "${{ inputs.arm_tune }}" = "armv9" ]; then
-        echo "[*] Applying ARMv9.2-a / Cortex-X4 tuning (Xiaomi 14 / SM8650)..."
-        KCFLAGS_PARAM="-march=armv9.2-a+crypto -mcpu=cortex-x4"
+        echo "[*] Applying ARMv9-a baseline architecture tuning..."
+        KCFLAGS_PARAM="-march=armv9-a+crypto"
       fi
 
       if [ -f "build/build.sh" ]; then
@@ -60,7 +60,7 @@ runs:
           BAZEL_FLAGS+=( "--config=fast" )
         fi
         if [ -n "$KCFLAGS_PARAM" ]; then
-          BAZEL_FLAGS+=( "--copt=-march=armv9.2-a+crypto" "--copt=-mcpu=cortex-x4" )
+          BAZEL_FLAGS+=( "--copt=-march=armv9-a+crypto" )
         fi
         tools/bazel build \
           "${BAZEL_FLAGS[@]}" \

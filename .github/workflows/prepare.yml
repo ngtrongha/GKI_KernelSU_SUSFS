@@ -86,11 +86,6 @@ on:
         required: false
         type: string
         default: "generic"
-      enable_bore:
-        description: "Enable BORE Scheduler for 6.1"
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   generate-matrix:
@@ -200,5 +195,4 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.enable_bore }}
     secrets: inherit

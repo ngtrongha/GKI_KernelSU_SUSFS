@@ -100,13 +100,9 @@ on:
         type: boolean
         default: true
       use_perf:
-        description: "Performance"
+        description: "Performance (MGLRU, Mem Operations, F2FS/UFS Tuning)"
         type: boolean
-        default: false
-      use_bore:
-        description: "BORE Scheduler (6.1 only)"
-        type: boolean
-        default: false
+        default: true
       lto_mode:
         description: "LTO Mode"
         type: choice
@@ -660,7 +656,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android13-5-10:
@@ -692,7 +687,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android13-5-15:
@@ -724,7 +718,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android14-5-15:
@@ -756,7 +749,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android14-6-1:
@@ -788,7 +780,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android15-6-6:
@@ -820,7 +811,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   build-android16-6-12:
@@ -852,7 +842,6 @@ jobs:
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto_mode }}
       arm_tune: ${{ inputs.arm_tune }}
-      enable_bore: ${{ inputs.use_bore }}
     secrets: inherit
 
   update-verified-pins:

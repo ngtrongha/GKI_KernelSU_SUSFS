@@ -80,10 +80,6 @@ on:
         required: false
         type: string
         default: "generic"
-      enable_bore:
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   build-gki:
@@ -321,12 +317,6 @@ jobs:
 
     - name: Setup Misc Configs
       uses: ./.github/actions/misc
-
-    - name: Apply BORE Scheduler Patch
-      if: inputs.enable_bore && inputs.kernel_version == '6.1'
-      uses: ./.github/actions/bore
-      with:
-        kernel_version: ${{ inputs.kernel_version }}
 
     - name: Enable BPF Stack (BTF + eBPF + FUSE-BPF)
       if: contains(inputs.feature_set, 'BPF')
