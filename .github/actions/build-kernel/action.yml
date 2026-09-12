@@ -59,10 +59,8 @@ runs:
         else
           BAZEL_FLAGS+=( "--config=fast" )
         fi
-        if [ -n "$KCFLAGS_PARAM" ]; then
-          BAZEL_FLAGS+=( "--copt=-march=armv9-a+crypto" )
-        fi
         tools/bazel build \
+          --verbose_failures \
           "${BAZEL_FLAGS[@]}" \
           --disk_cache=/home/runner/.cache/bazel \
           //common:kernel_aarch64/Image

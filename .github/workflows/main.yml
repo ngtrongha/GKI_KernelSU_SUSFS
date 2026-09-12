@@ -100,9 +100,9 @@ on:
         type: boolean
         default: true
       use_perf:
-        description: "Performance (MGLRU, Mem Operations, F2FS/UFS Tuning)"
+        description: "Experimental Performance Patches (WildKernels C Patches)"
         type: boolean
-        default: true
+        default: false
       lto_mode:
         description: "LTO Mode"
         type: choice
@@ -114,9 +114,9 @@ on:
         description: "ARM Architecture Tuning"
         type: choice
         options:
-          - armv9.2-a
           - generic
-        default: armv9.2-a
+          - armv9.2-a
+        default: generic
       test_release_notes:
         description: "Render release notes preview only (skip all builds + release)"
         type: boolean
