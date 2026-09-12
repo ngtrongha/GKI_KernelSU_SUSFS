@@ -102,7 +102,7 @@ on:
       use_perf:
         description: "Experimental Performance Patches (WildKernels C Patches)"
         type: boolean
-        default: false
+        default: true
       lto_mode:
         description: "LTO Mode"
         type: choice
