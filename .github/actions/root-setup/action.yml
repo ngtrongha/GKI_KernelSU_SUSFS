@@ -85,6 +85,22 @@ runs:
         fi
         root_version="$(git -C "$directory" describe --tags --always --dirty)"
 
+        if [ "$flavor" = "resukisu" ] && [ -f "$directory/kernel/Kbuild" ]; then
+          echo "[*] Fixing ReSukiSU Kbuild for Bazel build..."
+          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD 2>/dev/null || echo 1)"
+          ksu_ver=$(( 30000 + ksu_local_ver + 700 ))
+          ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")"
+          ksu_sha="${actual_commit:0:8}"
+          sed -i '/LOCAL_GIT_EXISTS/,/endif/d' "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_LOCAL_VERSION :=.*|KSU_LOCAL_VERSION := ${ksu_local_ver}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_VERSION :=.*|KSU_VERSION := ${ksu_ver}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_TAG_NAME.*|KSU_TAG_NAME := ${ksu_tag}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_COMMIT_SHA.*|KSU_COMMIT_SHA := ${ksu_sha}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_BRANCH_NAME.*|KSU_BRANCH_NAME := main|" "$directory/kernel/Kbuild"
+          sed -i '/fetch --unshallow/d' "$directory/kernel/Kbuild"
+          sed -i '/diff-index/d' "$directory/kernel/Kbuild"
+        fi
+
         relative_kernel="$(realpath --relative-to="$drivers_dir" "$PWD/$directory/kernel")"
         ln -s "$relative_kernel" "$drivers_dir/kernelsu"
         grep -q 'obj-$(CONFIG_KSU) += kernelsu/' "$drivers_dir/Makefile" ||
