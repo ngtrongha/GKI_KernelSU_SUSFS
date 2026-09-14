@@ -32,6 +32,7 @@ runs:
           CONFIG_LRU_GEN=y
           CONFIG_LRU_GEN_ENABLED=y
           CONFIG_ZRAM_DEF_COMP_ZSTD=y
+          CONFIG_ZRAM_MULTI_COMP=y
           CONFIG_ZRAM_WRITEBACK=y
           CONFIG_HZ_250=n
           CONFIG_HZ_300=y

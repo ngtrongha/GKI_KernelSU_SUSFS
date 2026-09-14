@@ -70,4 +70,23 @@ runs:
         echo "Patching silence_system_logspam.patch"
         patch -p1 -F3 --forward < "${{ github.workspace }}/kernel_patches/common/silence_system_logspam.patch"
 
+        # Tune page_cluster for ZRAM (0 = 1 page swap-in, eliminates multi-page decompression latency)
+        if [ -f "mm/swap.c" ]; then
+          sed -i 's/page_cluster = [0-9];/page_cluster = 0;/g' mm/swap.c
+          echo "[+] Tuned mm/swap.c: page_cluster = 0 for ZRAM"
+        fi
+
+        # Tune watermark_scale_factor (10 -> 100 for smoother kswapd wakeups and zero direct reclaim spikes)
+        if [ -f "mm/page_alloc.c" ]; then
+          sed -i 's/int watermark_scale_factor = 10;/int watermark_scale_factor = 100;/g' mm/page_alloc.c
+          echo "[+] Tuned mm/page_alloc.c: watermark_scale_factor = 100"
+        fi
+
+        # Tune F2FS data age thresholds for high-speed UFS 4.0 storage
+        if [ -f "fs/f2fs/f2fs.h" ]; then
+          sed -i 's/#define DEF_HOT_DATA_AGE_THRESHOLD\t262144/#define DEF_HOT_DATA_AGE_THRESHOLD\t524288/g' fs/f2fs/f2fs.h
+          sed -i 's/#define DEF_WARM_DATA_AGE_THRESHOLD\t2621440/#define DEF_WARM_DATA_AGE_THRESHOLD\t5242880/g' fs/f2fs/f2fs.h
+          echo "[+] Tuned fs/f2fs/f2fs.h: data age thresholds for UFS 4.0"
+        fi
+
         echo "[+] Other patches applied"
