@@ -89,4 +89,57 @@ runs:
           echo "[+] Tuned fs/f2fs/f2fs.h: data age thresholds for UFS 4.0"
         fi
 
+        # Zero-KMI BORE Burst Scheduler (GKI 6.1 dynamic burst scoring for 120Hz jitter-free frame dispatch)
+        if [ -f "kernel/sched/fair.c" ]; then
+          if ! grep -q "BORE (Burst-Oriented Response Enhancer)" kernel/sched/fair.c; then
+            sed -i '/static inline u64 calc_delta_fair/,/return delta;/ {
+              /return delta;/i \
+\	/* BORE (Burst-Oriented Response Enhancer) zero-KMI burst logic for GKI 6.1 */\
+\	if (se->sum_exec_runtime > se->prev_sum_exec_runtime) {\
+\		u64 burst_exec = se->sum_exec_runtime - se->prev_sum_exec_runtime;\
+\		if (burst_exec > 10000000ULL) {\
+\			u64 penalty_shift = min_t(u64, (burst_exec - 10000000ULL) >> 22, 2ULL);\
+\			delta += (delta * penalty_shift) >> 1;\
+\		}\
+\	}
+            }' kernel/sched/fair.c
+            echo "[+] Tuned kernel/sched/fair.c: zero-KMI BORE burst scheduler applied"
+          fi
+        fi
+
+        # uclamp.max cap & CPU 7 (Cortex-X4 Prime) affinity restriction for background tasks
+        if [ -f "kernel/sched/core.c" ]; then
+          if ! grep -q "Restrict background tasks from acquiring CPU 7" kernel/sched/core.c; then
+            # Enforce uclamp.max = 400 cap for background tasks (task_nice >= 10)
+            sed -i '/return min(uc_se->value, uc_grp->value);/ {
+              i \
+\	/* Cap uclamp.max to 400 for background tasks */\
+\	if (clamp_id == UCLAMP_MAX && task_nice(p) >= 10)\
+\		return min_t(unsigned int, min(uc_se->value, uc_grp->value), 400U);
+            }' kernel/sched/core.c
+
+            # Restrict background tasks from acquiring CPU 7 (Cortex-X4 Prime) affinity
+            sed -i '/cpumask_and(new_mask, in_mask, new_mask);/a \
+\	/* Restrict background tasks from acquiring CPU 7 (Cortex-X4 Prime) */\
+\	if (task_nice(p) >= 10 || uclamp_eff_value(p, UCLAMP_MAX) <= 400)\
+\		cpumask_clear_cpu(7, new_mask);' kernel/sched/core.c
+            echo "[+] Tuned kernel/sched/core.c: uclamp background cap & CPU 7 affinity restriction applied"
+          fi
+        fi
+
+        # Network RPS Packet Steering (steer network softirqs to CPUs 0-1 Little cores)
+        if [ -f "net/core/dev.c" ]; then
+          if ! grep -q "Fallback RPS for SM8650" net/core/dev.c; then
+            sed -i '/done:/ {
+              n;
+              /return cpu;/i \
+\	/* Fallback RPS for SM8650: steer network softirqs to CPUs 0-1 (Little cores) */\
+\	if (cpu < 0)\
+\		cpu = (skb_get_hash(skb) & 1) ? 1 : 0;
+            }' net/core/dev.c
+            echo "[+] Tuned net/core/dev.c: network RPS steering to CPUs 0-1 applied"
+          fi
+        fi
+
         echo "[+] Other patches applied"
+
