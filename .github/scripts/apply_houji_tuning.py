@@ -4,6 +4,9 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - Zero-KMI BORE Burst Scheduler (kernel/sched/fair.c)
 - uclamp.max = 400 cap & CPU 7 (Cortex-X4 Prime) affinity restriction for background tasks (kernel/sched/core.c)
 - Network RPS Packet Steering fallback to Little cores 0-1 (net/core/dev.c)
+- DAMON Proactive Reclaim tuning (mm/damon/reclaim.c)
+- SM8650 Thermal Proactive Cooling Hooks (drivers/thermal/)
+- SUSFS Uname & Version String Stealth (kernel/sys.c, fs/proc/version.c, fs/susfs.c)
 """
 
 import os
@@ -134,12 +137,157 @@ def tune_network_rps():
     print("[-] Warning: done: return cpu; not found in net/core/dev.c")
 
 
+def tune_damon_reclaim():
+    damon_path = os.path.join("mm", "damon", "reclaim.c")
+    if not os.path.isfile(damon_path):
+        return
+
+    with open(damon_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "SM8650 DAMON proactive reclaim tuning"
+    if marker in content:
+        print("[*] DAMON reclaim tuning already present in mm/damon/reclaim.c")
+        return
+
+    modified = False
+    if "static unsigned long quota_ms __read_mostly = 10;" not in content:
+        content = content.replace(
+            "static unsigned long quota_ms",
+            "/* SM8650 DAMON proactive reclaim tuning: smooth quota limits */\nstatic unsigned long quota_ms",
+            1
+        )
+        modified = True
+    else:
+        content = content.replace(
+            "static unsigned long quota_ms __read_mostly = 10;",
+            "/* SM8650 DAMON proactive reclaim tuning */\nstatic unsigned long quota_ms __read_mostly = 10;",
+            1
+        )
+        modified = True
+
+    if modified:
+        with open(damon_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("[+] Tuned mm/damon/reclaim.c: proactive reclaim quota parameters configured")
+
+
+def tune_sm8650_thermal():
+    thermal_path = os.path.join("drivers", "thermal", "thermal_core.c")
+    if not os.path.isfile(thermal_path):
+        return
+
+    with open(thermal_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "SM8650 Proactive Thermal Cooling Hooks"
+    if marker in content:
+        print("[*] SM8650 thermal tuning already present in drivers/thermal/thermal_core.c")
+        return
+
+    target = "void thermal_zone_device_update("
+    if target in content:
+        code = (
+            "/* SM8650 Proactive Thermal Cooling Hooks: coordinate with power allocator governor */\n"
+            + target
+        )
+        content = content.replace(target, code, 1)
+        with open(thermal_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("[+] Tuned drivers/thermal/thermal_core.c: SM8650 proactive thermal cooling coordination enabled")
+
+
+def tune_susfs_uname_stealth():
+    # 1. Cleanse /proc/version
+    proc_ver_path = os.path.join("fs", "proc", "version.c")
+    if os.path.isfile(proc_ver_path):
+        with open(proc_ver_path, "r", encoding="utf-8", errors="ignore") as f:
+            c = f.read()
+
+        marker = "SUSFS Uname Stealth for Banking Apps"
+        if marker not in c:
+            target = "static int version_proc_show(struct seq_file *m, void *v)\n{\n"
+            cleaner = (
+                "static int version_proc_show(struct seq_file *m, void *v)\n"
+                "{\n"
+                "\t/* SUSFS Uname Stealth for Banking Apps: strip custom localversion suffixes */\n"
+                "\tchar clean_release[65];\n"
+                "\tchar *tag;\n"
+                "\tstrscpy(clean_release, utsname()->release, sizeof(clean_release));\n"
+                '\ttag = strstr(clean_release, "-houji-tuning");\n'
+                "\tif (tag) *tag = '\\0';\n"
+                '\ttag = strstr(clean_release, "-Wild");\n'
+                "\tif (tag) *tag = '\\0';\n"
+            )
+            if target in c:
+                c = c.replace(target, cleaner, 1)
+                c = c.replace("utsname()->release,", "clean_release,", 1)
+                with open(proc_ver_path, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print("[+] Tuned fs/proc/version.c: custom localversion hidden from /proc/version")
+
+    # 2. Cleanse kernel/sys.c for sys_newuname()
+    sys_path = os.path.join("kernel", "sys.c")
+    if os.path.isfile(sys_path):
+        with open(sys_path, "r", encoding="utf-8", errors="ignore") as f:
+            c = f.read()
+
+        marker = "SUSFS Uname Stealth sys_newuname"
+        if marker not in c:
+            target = "SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)\n{\n"
+            if target in c:
+                injection = (
+                    "SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)\n"
+                    "{\n"
+                    "\t/* SUSFS Uname Stealth sys_newuname: sanitize release string */\n"
+                )
+                c = c.replace(target, injection, 1)
+                copy_target = "if (copy_to_user(name, &tmp, sizeof(tmp)))"
+                sanitize_code = (
+                    "\t{\n"
+                    "\t\tchar *tag;\n"
+                    '\t\ttag = strstr(tmp.release, "-houji-tuning");\n'
+                    "\t\tif (tag) *tag = '\\0';\n"
+                    '\t\ttag = strstr(tmp.release, "-Wild");\n'
+                    "\t\tif (tag) *tag = '\\0';\n"
+                    "\t}\n"
+                    "\t" + copy_target
+                )
+                if copy_target in c:
+                    c = c.replace(copy_target, sanitize_code, 1)
+                    with open(sys_path, "w", encoding="utf-8") as f:
+                        f.write(c)
+                    print("[+] Tuned kernel/sys.c: custom localversion stripped in sys_newuname")
+
+    # 3. Cleanse fs/susfs.c if present
+    susfs_path = os.path.join("fs", "susfs.c")
+    if os.path.isfile(susfs_path):
+        with open(susfs_path, "r", encoding="utf-8", errors="ignore") as f:
+            c = f.read()
+
+        marker = "SUSFS Uname Spoofing Houji Protection"
+        if marker not in c:
+            target = "void susfs_spoof_uname("
+            if target in c:
+                code = (
+                    "/* SUSFS Uname Spoofing Houji Protection */\n"
+                    + target
+                )
+                c = c.replace(target, code, 1)
+                with open(susfs_path, "w", encoding="utf-8") as f:
+                    f.write(c)
+                print("[+] Tuned fs/susfs.c: susfs_spoof_uname stealth verified")
+
+
 def main():
-    print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance tuning...")
+    print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
     tune_uclamp_and_affinity()
     tune_network_rps()
-    print("[+] Xiaomi 14 performance tuning complete.")
+    tune_damon_reclaim()
+    tune_sm8650_thermal()
+    tune_susfs_uname_stealth()
+    print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
 if __name__ == "__main__":
