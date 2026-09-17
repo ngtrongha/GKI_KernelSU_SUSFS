@@ -99,6 +99,9 @@ runs:
           echo "[*] Fixing ReSukiSU Kbuild for Bazel build..."
           ksu_local_ver="$(git -C "$directory" rev-list --count HEAD 2>/dev/null || echo 1)"
           ksu_ver=$(( 30000 + ksu_local_ver + 700 ))
+          if [ "$ksu_ver" -lt 32336 ]; then
+            ksu_ver=32336
+          fi
           ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")"
           ksu_sha="${actual_commit:0:8}"
           sed -i '/LOCAL_GIT_EXISTS/,/endif/d' "$directory/kernel/Kbuild"
@@ -109,6 +112,25 @@ runs:
           sed -i "s|^KSU_BRANCH_NAME.*|KSU_BRANCH_NAME := main|" "$directory/kernel/Kbuild"
           sed -i '/fetch --unshallow/d' "$directory/kernel/Kbuild"
           sed -i '/diff-index/d' "$directory/kernel/Kbuild"
+        fi
+
+        if [ "$flavor" = "next" ] && [ -f "$directory/kernel/Kbuild" ]; then
+          echo "[*] Fixing KernelSU-Next Kbuild for Bazel build..."
+          git -C "$directory" fetch --unshallow 2>/dev/null || true
+          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD 2>/dev/null || echo 3300)"
+          if [ "$ksu_local_ver" -le 1 ]; then
+            ksu_local_ver=3300
+          fi
+          ksu_ver=$(( 30000 + ksu_local_ver ))
+          if [ "$ksu_ver" -lt 32336 ]; then
+            ksu_ver=33276
+          fi
+          ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags 2>/dev/null || echo "v3.3.0")"
+          echo "[+] KernelSU-Next version calculated: $ksu_ver ($ksu_tag)"
+          sed -i "s|^KSU_VERSION_FALLBACK :=.*|KSU_VERSION_FALLBACK := ${ksu_ver}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_VERSION_TAG_FALLBACK :=.*|KSU_VERSION_TAG_FALLBACK := ${ksu_tag}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_GIT_VERSION :=.*|KSU_GIT_VERSION := ${ksu_local_ver}|" "$directory/kernel/Kbuild"
+          sed -i "s|^KSU_GIT_TAG :=.*|KSU_GIT_TAG := ${ksu_tag}|" "$directory/kernel/Kbuild"
         fi
 
         relative_kernel="$(realpath --relative-to="$drivers_dir" "$PWD/$directory/kernel")"
