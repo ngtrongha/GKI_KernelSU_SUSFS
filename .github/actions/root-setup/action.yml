@@ -96,14 +96,14 @@ runs:
         root_version="$(git -C "$directory" describe --tags --always --dirty)"
 
         if [ "$flavor" = "resukisu" ] && [ -f "$directory/kernel/Kbuild" ]; then
-          echo "[*] Fixing ReSukiSU Kbuild for Bazel build..."
-          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD 2>/dev/null || echo 1)"
+          echo "[*] Resolving exact ReSukiSU version dynamically from git..."
+          git -C "$directory" fetch --unshallow origin || true
+          git -C "$directory" fetch --tags origin || true
+          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD)"
           ksu_ver=$(( 30000 + ksu_local_ver + 700 ))
-          if [ "$ksu_ver" -lt 32336 ]; then
-            ksu_ver=32336
-          fi
-          ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")"
+          ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags)"
           ksu_sha="${actual_commit:0:8}"
+          echo "[+] Exact ReSukiSU version: ${ksu_ver} (tag: ${ksu_tag}, commits: ${ksu_local_ver})"
           sed -i '/LOCAL_GIT_EXISTS/,/endif/d' "$directory/kernel/Kbuild"
           sed -i "s|^KSU_LOCAL_VERSION :=.*|KSU_LOCAL_VERSION := ${ksu_local_ver}|" "$directory/kernel/Kbuild"
           sed -i "s|^KSU_VERSION :=.*|KSU_VERSION := ${ksu_ver}|" "$directory/kernel/Kbuild"
@@ -115,18 +115,13 @@ runs:
         fi
 
         if [ "$flavor" = "next" ] && [ -f "$directory/kernel/Kbuild" ]; then
-          echo "[*] Fixing KernelSU-Next Kbuild for Bazel build..."
-          git -C "$directory" fetch --unshallow 2>/dev/null || true
-          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD 2>/dev/null || echo 3300)"
-          if [ "$ksu_local_ver" -le 1 ]; then
-            ksu_local_ver=3300
-          fi
+          echo "[*] Resolving exact KernelSU-Next version dynamically from git..."
+          git -C "$directory" fetch --unshallow origin || true
+          git -C "$directory" fetch --tags origin || true
+          ksu_local_ver="$(git -C "$directory" rev-list --count HEAD)"
           ksu_ver=$(( 30000 + ksu_local_ver ))
-          if [ "$ksu_ver" -lt 32336 ]; then
-            ksu_ver=33276
-          fi
-          ksu_tag="$(git -C "$directory" describe --abbrev=0 --tags 2>/dev/null || echo "v3.3.0")"
-          echo "[+] KernelSU-Next version calculated: $ksu_ver ($ksu_tag)"
+          ksu_tag="$(git -C "$directory" describe --tags --abbrev=0)"
+          echo "[+] Exact KernelSU-Next version: ${ksu_ver} (tag: ${ksu_tag}, commits: ${ksu_local_ver})"
           sed -i "s|^KSU_VERSION_FALLBACK :=.*|KSU_VERSION_FALLBACK := ${ksu_ver}|" "$directory/kernel/Kbuild"
           sed -i "s|^KSU_VERSION_TAG_FALLBACK :=.*|KSU_VERSION_TAG_FALLBACK := ${ksu_tag}|" "$directory/kernel/Kbuild"
           sed -i "s|^KSU_GIT_VERSION :=.*|KSU_GIT_VERSION := ${ksu_local_ver}|" "$directory/kernel/Kbuild"
