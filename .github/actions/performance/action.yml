@@ -77,10 +77,13 @@ runs:
         fi
 
         # Tune watermark_scale_factor (10 -> 100 for smoother kswapd wakeups and zero direct reclaim spikes)
+        # and disable watermark_boost_factor (0 to prevent memory churn)
         if [ -f "mm/page_alloc.c" ]; then
           sed -i 's/int watermark_scale_factor = 10;/int watermark_scale_factor = 100;/g' mm/page_alloc.c
-          echo "[+] Tuned mm/page_alloc.c: watermark_scale_factor = 100"
+          sed -i 's/int watermark_boost_factor __read_mostly = 15000;/int watermark_boost_factor __read_mostly = 0;/g' mm/page_alloc.c
+          echo "[+] Tuned mm/page_alloc.c: watermark_scale_factor = 100, watermark_boost_factor = 0"
         fi
+
 
         # Tune F2FS data age thresholds for high-speed UFS 4.0 storage
         if [ -f "fs/f2fs/f2fs.h" ]; then

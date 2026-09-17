@@ -7,6 +7,9 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - DAMON Proactive Reclaim tuning (mm/damon/reclaim.c)
 - SM8650 Thermal Proactive Cooling Hooks (drivers/thermal/)
 - SUSFS Uname & Version String Stealth (kernel/sys.c, fs/proc/version.c, fs/susfs.c)
+- Watermark Boost Factor disabled (mm/page_alloc.c)
+- Bypass Charging / Pass-Through Control (drivers/power/supply/power_supply_sysfs.c)
+- SUSFS SELinux Enforce Stealth for banking apps (security/selinux/selinuxfs.c)
 """
 
 import os
@@ -279,6 +282,91 @@ def tune_susfs_uname_stealth():
                 print("[+] Tuned fs/susfs.c: susfs_spoof_uname stealth verified")
 
 
+def tune_watermark_boost():
+    page_alloc_path = os.path.join("mm", "page_alloc.c")
+    if not os.path.isfile(page_alloc_path):
+        return
+
+    with open(page_alloc_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "watermark_boost_factor __read_mostly = 0"
+    if marker in content:
+        print("[*] watermark_boost_factor already set to 0 in mm/page_alloc.c")
+        return
+
+    targets = [
+        "int watermark_boost_factor __read_mostly = 15000;",
+        "int watermark_boost_factor = 15000;",
+    ]
+
+    for target in targets:
+        if target in content:
+            content = content.replace(target, "int watermark_boost_factor __read_mostly = 0; /* disabled to avoid memory churn */", 1)
+            with open(page_alloc_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("[+] Tuned mm/page_alloc.c: watermark_boost_factor set to 0")
+            return
+
+
+def tune_bypass_charging():
+    psy_path = os.path.join("drivers", "power", "supply", "power_supply_sysfs.c")
+    if not os.path.isfile(psy_path):
+        return
+
+    with open(psy_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "Bypass charging / pass-through control"
+    if marker in content:
+        print("[*] Bypass charging sysfs hooks already present in power_supply_sysfs.c")
+        return
+
+    target = "if (power_supply_has_property(psy->desc, attrno)) {"
+    if target in content:
+        code = (
+            "if (power_supply_has_property(psy->desc, attrno)) {\n"
+            "\t\t/* Bypass charging / pass-through control: expose charging_enabled and input_suspend as writable */\n"
+            "\t\tif (attrno == POWER_SUPPLY_PROP_CHARGING_ENABLED ||\n"
+            "\t\t    attrno == POWER_SUPPLY_PROP_INPUT_SUSPEND)\n"
+            "\t\t\treturn S_IRUGO | S_IWUSR | S_IWGRP;"
+        )
+        content = content.replace(target, code, 1)
+        with open(psy_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("[+] Tuned drivers/power/supply/power_supply_sysfs.c: bypass charging sysfs hooks exposed")
+
+
+def tune_selinux_enforce_stealth():
+    selinux_path = os.path.join("security", "selinux", "selinuxfs.c")
+    if not os.path.isfile(selinux_path):
+        return
+
+    with open(selinux_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "SUSFS SELinux Enforce Stealth"
+    if marker in content:
+        print("[*] SELinux enforce stealth already present in selinuxfs.c")
+        return
+
+    target = "static ssize_t sel_read_enforce(struct file *filp, char __user *buf,\n\t\t\t\tsize_t count, loff_t *ppos)\n{\n"
+    if target in content:
+        code = (
+            target
+            + "\t/* SUSFS SELinux Enforce Stealth: unprivileged apps always see 1 (Enforcing) */\n"
+            "\tif (current_uid().val >= 10000) {\n"
+            "\t\tchar tmpbuf[TMPBUFLEN];\n"
+            "\t\tssize_t length = scnprintf(tmpbuf, TMPBUFLEN, \"1\");\n"
+            "\t\treturn simple_read_from_buffer(buf, count, ppos, tmpbuf, length);\n"
+            "\t}\n"
+        )
+        content = content.replace(target, code, 1)
+        with open(selinux_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("[+] Tuned security/selinux/selinuxfs.c: unprivileged SELinux enforce spoofing enabled")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -287,6 +375,9 @@ def main():
     tune_damon_reclaim()
     tune_sm8650_thermal()
     tune_susfs_uname_stealth()
+    tune_watermark_boost()
+    tune_bypass_charging()
+    tune_selinux_enforce_stealth()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
