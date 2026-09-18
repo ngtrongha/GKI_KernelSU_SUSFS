@@ -30,8 +30,8 @@ runs:
 
       KCFLAGS_PARAM=""
       if [ "${{ inputs.arm_tune }}" = "armv9.2-a" ] || [ "${{ inputs.arm_tune }}" = "armv9" ]; then
-        echo "[*] Applying ARMv9-a baseline architecture tuning..."
-        KCFLAGS_PARAM="-march=armv9-a+crypto"
+        echo "[*] Applying ARMv9.2-A architecture tuning with crypto and dotprod for SM8650..."
+        KCFLAGS_PARAM="-march=armv9.2-a+crypto+dotprod"
       fi
 
       if [ -f "build/build.sh" ]; then

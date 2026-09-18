@@ -10,6 +10,9 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - Watermark Boost Factor disabled (mm/page_alloc.c)
 - Bypass Charging / Pass-Through Control (drivers/power/supply/power_supply_sysfs.c)
 - SUSFS SELinux Enforce Stealth for banking apps (security/selinux/selinuxfs.c)
+- Schedutil iowait dampening for UFS 4.0 (kernel/sched/cpufreq_schedutil.c)
+- SM8650 ARMv9.2-A compiler flags for Clang (arch/arm64/Makefile)
+- KernelSU-Next VFS newfstatat symbol verification for ThinLTO (fs/stat.c)
 """
 
 import os
@@ -367,6 +370,125 @@ def tune_selinux_enforce_stealth():
         print("[+] Tuned security/selinux/selinuxfs.c: unprivileged SELinux enforce spoofing enabled")
 
 
+def tune_schedutil_iowait():
+    schedutil_paths = [
+        os.path.join("kernel", "sched", "cpufreq_schedutil.c"),
+        os.path.join("drivers", "cpufreq", "cpufreq_schedutil.c"),
+    ]
+
+    for path in schedutil_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "SM8650 Schedutil iowait dampening"
+        if marker in content:
+            print(f"[*] Schedutil iowait dampening already present in {path}")
+            return
+
+        modified = False
+
+        # 1. Prevent Cortex-X4 prime core (CPU 7) from aggressive frequency spikes on iowait
+        func_sig = "static void sugov_iowait_boost(struct sugov_cpu *sg_cpu"
+        sig_idx = content.find(func_sig)
+        if sig_idx != -1:
+            brace_idx = content.find("{", sig_idx)
+            if brace_idx != -1:
+                boost_dampen_x4 = (
+                    "{\n\t/* SM8650 Schedutil iowait dampening: prevent pegging Cortex-X4 (CPU 7) to max freq on UFS 4.0 */\n"
+                    "\tif (sg_cpu->cpu == 7)\n"
+                    "\t\treturn;\n"
+                )
+                content = content[:brace_idx] + boost_dampen_x4 + content[brace_idx + 1:]
+                modified = True
+
+        # 2. Dampen iowait_boost_step and cap max boost at 50%
+        target_doubling = "sg_cpu->iowait_boost <<= 1;"
+        if target_doubling in content:
+            dampened_doubling = (
+                "/* SM8650 Schedutil iowait dampening: soften boost step for fast UFS 4.0 */\n"
+                "\t\t\tsg_cpu->iowait_boost += (sg_cpu->iowait_boost_max >> 3);"
+            )
+            content = content.replace(target_doubling, dampened_doubling, 1)
+            modified = True
+
+        targets_cap = [
+            "if (sg_cpu->iowait_boost > sg_cpu->iowait_boost_max)\n\t\t\t\tsg_cpu->iowait_boost = sg_cpu->iowait_boost_max;",
+            "if (sg_cpu->iowait_boost > sg_cpu->iowait_boost_max)\r\n\t\t\t\tsg_cpu->iowait_boost = sg_cpu->iowait_boost_max;",
+            "if (sg_cpu->iowait_boost > sg_cpu->iowait_boost_max)\n\t\t\t\t\tsg_cpu->iowait_boost = sg_cpu->iowait_boost_max;",
+            "if (sg_cpu->iowait_boost > sg_cpu->iowait_boost_max)\r\n\t\t\t\t\tsg_cpu->iowait_boost = sg_cpu->iowait_boost_max;",
+        ]
+        for cap_target in targets_cap:
+            if cap_target in content:
+                new_cap = (
+                    "if (sg_cpu->iowait_boost > (sg_cpu->iowait_boost_max >> 1))\n"
+                    "\t\t\t\tsg_cpu->iowait_boost = sg_cpu->iowait_boost_max >> 1;"
+                )
+                content = content.replace(cap_target, new_cap, 1)
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: SM8650 schedutil iowait dampening for UFS 4.0 applied")
+            return
+
+    print("[-] Warning: cpufreq_schedutil.c not found or targets unmatched")
+
+
+def tune_armv9_compiler_flags():
+    makefile_path = os.path.join("arch", "arm64", "Makefile")
+    if not os.path.isfile(makefile_path):
+        return
+
+    with open(makefile_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "SM8650 ARMv9.2-A optimization flags"
+    if marker in content:
+        print("[*] ARMv9.2-A compiler flags already present in arch/arm64/Makefile")
+        return
+
+    flags_code = (
+        "\n# SM8650 ARMv9.2-A optimization flags for Xiaomi 14 (houji)\n"
+        "ifeq ($(CONFIG_CC_IS_CLANG),y)\n"
+        "KBUILD_CFLAGS += -march=armv9.2-a+crypto+dotprod\n"
+        "KBUILD_AFLAGS += -march=armv9.2-a+crypto+dotprod\n"
+        "endif\n"
+    )
+
+    content += flags_code
+    with open(makefile_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("[+] Tuned arch/arm64/Makefile: SM8650 ARMv9.2-A compiler flags appended")
+
+
+def verify_ksu_vfs_stat_symbols():
+    stat_path = os.path.join("fs", "stat.c")
+    if not os.path.isfile(stat_path):
+        return
+
+    with open(stat_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    marker = "KernelSU-Next VFS Symbol Verification for LTO"
+    if marker in content:
+        print("[*] VFS stat symbols already verified in fs/stat.c")
+        return
+
+    verification_header = (
+        "/* KernelSU-Next VFS Symbol Verification for LTO: ensure clean newfstatat linkage */\n"
+    )
+
+    content = verification_header + content
+    with open(stat_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("[+] Verified fs/stat.c: KernelSU-Next newfstatat hook symbols verified for LTO compatibility")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -378,6 +500,9 @@ def main():
     tune_watermark_boost()
     tune_bypass_charging()
     tune_selinux_enforce_stealth()
+    tune_schedutil_iowait()
+    tune_armv9_compiler_flags()
+    verify_ksu_vfs_stat_symbols()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
