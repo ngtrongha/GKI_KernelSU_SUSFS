@@ -665,11 +665,13 @@ def tune_avc_log_silencing():
 
         marker = "SUSFS Log Concealment for Banking Stealth"
         if marker not in c:
-            header = "/* SUSFS Log Concealment for Banking Stealth */\n#define pr_info(...) do {} while (0)\n#define pr_warn(...) do {} while (0)\n"
-            c = header + c
+            # Replace pr_info and pr_warn with pr_debug to avoid -Werror,-Wmacro-redefined while silencing logs in production
+            c = "/* SUSFS Log Concealment for Banking Stealth */\n" + c
+            c = c.replace("pr_info(", "pr_debug(")
+            c = c.replace("pr_warn(", "pr_debug(")
             with open(susfs_path, "w", encoding="utf-8") as f:
                 f.write(c)
-            print("[+] Tuned fs/susfs.c: susfs kernel log emission silenced for stealth")
+            print("[+] Tuned fs/susfs.c: susfs kernel log emission silenced via pr_debug")
 
 
 def main():

@@ -111,7 +111,7 @@ runs:
           sed -i "s|^KSU_COMMIT_SHA.*|KSU_COMMIT_SHA := ${ksu_sha}|" "$directory/kernel/Kbuild"
           sed -i "s|^KSU_BRANCH_NAME.*|KSU_BRANCH_NAME := main|" "$directory/kernel/Kbuild"
           sed -i '/fetch --unshallow/d' "$directory/kernel/Kbuild"
-          sed -i '/diff-index/d' "$directory/kernel/Kbuild"
+          sed -i '/diff-index/,/endif/d' "$directory/kernel/Kbuild"
         fi
 
         if [ "$flavor" = "next" ] && [ -f "$directory/kernel/Kbuild" ]; then
