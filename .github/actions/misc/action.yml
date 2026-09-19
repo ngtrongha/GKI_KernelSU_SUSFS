@@ -56,3 +56,5 @@ runs:
           CONFIG_LTO_CLANG_FULL=n
           CONFIG_LTO_CLANG_THIN=y
           CONFIG_ARCH_SUPPORTS_LTO_CLANG_THIN=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TCP_CONG_BBR=y
