@@ -1015,45 +1015,40 @@ else
     flash_boot
 fi
 
-# Auto-deploy Safe OEM Build Props & Anti-Detector (An toàn 100% - Không bootloop)
+# Cleanup any old dangerous post-fs-data.d scripts to instantly rescue from bootloop
 if [ -d /data/adb ]; then
-    ui_print " [*] Injecting Safe HyperHouji OEM Props (mi.com / houji / release-keys)..."
-    mkdir -p /data/adb/post-fs-data.d
-    rm -f /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null
-    cat << 'PROPEOF' > /data/adb/post-fs-data.d/00-hyperhouji-props.sh
+    rm -f /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null || true
+    rm -f /data/adb/post-fs-data.d/*hyperhouji* 2>/dev/null || true
+fi
+
+# Auto-deploy Safe OEM Build Props Spoofer via service.d (Non-blocking, 100% Safe)
+if [ -d /data/adb ]; then
+    ui_print " [*] Deploying Safe HyperHouji OEM Props Spoofer (service.d)..."
+    mkdir -p /data/adb/service.d
+    rm -f /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
+    cat << 'PROPEOF' > /data/adb/service.d/00-hyperhouji-props.sh
 #!/system/bin/sh
-# HyperHouji Safe Props: Fix VNeID CA-E012, Fake Host & Emulator Detection
-RESETPROP="/data/adb/ksu/bin/resetprop"
-[ -f "$RESETPROP" ] || RESETPROP="/system/bin/resetprop"
-[ -f "$RESETPROP" ] || RESETPROP="$(which resetprop 2>/dev/null)"
-[ -z "$RESETPROP" ] && RESETPROP="resetprop"
+# HyperHouji Safe Props: Fix VNeID CA-E012 via late service.d (Non-blocking)
+sleep 2
 
-# 1. Build Host Xiaomi chính hãng (Khắc phục triệt để VNeID CA-E012)
-$RESETPROP -n ro.build.host "mi.com" 2>/dev/null || $RESETPROP ro.build.host "mi.com" 2>/dev/null
-
-# 2. Build User & Tags thương mại
-$RESETPROP -n ro.build.user "builder" 2>/dev/null || $RESETPROP ro.build.user "builder" 2>/dev/null
-$RESETPROP -n ro.build.tags "release-keys" 2>/dev/null || $RESETPROP ro.build.tags "release-keys" 2>/dev/null
-$RESETPROP -n ro.system.build.tags "release-keys" 2>/dev/null || true
-
-# 3. Chuẩn hóa Product System (Chống bị nhận diện là Generic / Mainline Emulator)
-$RESETPROP -n ro.product.system.brand "Xiaomi" 2>/dev/null || true
-$RESETPROP -n ro.product.system.manufacturer "Xiaomi" 2>/dev/null || true
-$RESETPROP -n ro.product.system.device "houji" 2>/dev/null || true
-$RESETPROP -n ro.product.system.model "Xiaomi 14" 2>/dev/null || true
-$RESETPROP -n ro.product.system.name "houji" 2>/dev/null || true
-
-# 4. Xóa cờ QEMU Emulator trong RAM
-$RESETPROP -p qemu.hw.mainkeys 2>/dev/null || true
-$RESETPROP -p ro.kernel.qemu.gles 2>/dev/null || true
-
-# 5. Multi-Partition Tags
-for part in system vendor product system_ext odm; do
-    $RESETPROP -n "ro.${part}.build.tags" "release-keys" 2>/dev/null || true
+RESETPROP=""
+for p in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop /data/adb/magisk/resetprop /system/bin/resetprop; do
+    if [ -x "$p" ]; then
+        RESETPROP="$p"
+        break
+    fi
 done
+
+[ -z "$RESETPROP" ] && exit 0
+
+# Spoof OEM host to mi.com to resolve VNeID CA-E012
+$RESETPROP -n ro.build.host "mi.com" 2>/dev/null || true
+$RESETPROP -n ro.build.user "builder" 2>/dev/null || true
+$RESETPROP -n ro.build.tags "release-keys" 2>/dev/null || true
 PROPEOF
-    chmod 755 /data/adb/post-fs-data.d/00-hyperhouji-props.sh
-    chown root:root /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null || true
+    chmod 755 /data/adb/service.d/00-hyperhouji-props.sh
+    chown root:root /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
+    chcon u:object_r:adb_data_file:s0 /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
 fi
 
 ui_print " "
@@ -1075,17 +1070,20 @@ ui_print " "
         "               K   E   R   N   E   L\n"
     )
 
+    clean_anykernel_sh = clean_anykernel_sh.replace("\r\n", "\n").replace("\r", "\n")
+    banner_art = banner_art.replace("\r\n", "\n").replace("\r", "\n")
+
     found = False
     for ak3_dir in ak3_dirs:
         ak3_sh = os.path.join(ak3_dir, "anykernel.sh")
         if not os.path.isfile(ak3_sh):
             continue
 
-        with open(ak3_sh, "w", encoding="utf-8") as f:
+        with open(ak3_sh, "w", encoding="utf-8", newline="\n") as f:
             f.write(clean_anykernel_sh)
 
         banner_path = os.path.join(ak3_dir, "banner")
-        with open(banner_path, "w", encoding="utf-8") as f:
+        with open(banner_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(banner_art)
 
         print(f"[+] Replaced {ak3_sh} & {banner_path} with pure HyperHouji branding")
