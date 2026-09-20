@@ -103,7 +103,7 @@ on:
         type: boolean
         default: true
       use_perf:
-        description: "Experimental Performance Patches (WildKernels C Patches)"
+        description: "Experimental Performance Patches (Xiaomi 14 / SM8650 C Patches)"
         type: boolean
         default: true
       lto_mode:
@@ -1198,12 +1198,13 @@ jobs:
       run: |
         set -euo pipefail
 
+        BRAND="${{ inputs.brand_name || 'HyperHouji' }}"
         # Format release title: convert rN -> Release N
         if [[ "${NEW_TAG}" =~ ^r([0-9]+)$ ]]; then
           REV_NUM="${BASH_REMATCH[1]}"
-          release_title="Release ${REV_NUM}"
+          release_title="${BRAND} Release ${REV_NUM}"
         else
-          release_title="Release ${NEW_TAG}"
+          release_title="${BRAND} Release ${NEW_TAG}"
         fi
 
         echo "release_title=$release_title" >> "$GITHUB_OUTPUT"
@@ -1531,7 +1532,7 @@ jobs:
           gh release create nightly \
             --target "${{ github.sha }}" \
             --prerelease \
-            --title "Nightly (${{ github.ref_name }} $(date -u +%Y-%m-%d))" \
+            --title "${{ inputs.brand_name || 'HyperHouji' }} Nightly (${{ github.ref_name }} $(date -u +%Y-%m-%d))" \
             --notes-file nightly/release_body.md
 
   notes-preview:
@@ -1542,6 +1543,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Render release notes preview (always)
         env:
+          BRAND_NAME: ${{ inputs.brand_name }}
           ROOT_FLAVOR: ${{ inputs.root_flavor }}
           FEATURE_SET: ${{ needs.resolve-sources.outputs.feature_set }}
           MANAGER_LIST: ${{ needs.resolve-sources.outputs.manager_list }}
@@ -1598,6 +1600,7 @@ jobs:
               try: return json.loads(raw) if raw.strip() else []
               except: return []
           root = env("ROOT_FLAVOR","All")
+          brand = env("BRAND_NAME", "HyperHouji") or "HyperHouji"
           feats=[]
           if env("USE_SUSFS","true")=="true": feats.append("SUSFS")
           if env("USE_NOMOUNT","true")=="true": feats.append("NoMount")
@@ -1610,7 +1613,13 @@ jobs:
           if env("USE_BPF","true")=="true": feats.append("BTF / eBPF / FUSE-BPF")
           if env("USE_PERF","false")=="true": feats.append("Performance Tuning")
           lines=[]
-          lines.append("# Wild Kernels for GKI2 Devices")
+          lines.append(f"# {brand} Kernel for Xiaomi 14 (houji)")
+          lines.append("")
+          lines.append("> **Target Hardware:** Xiaomi 14 (`houji`) | Qualcomm Snapdragon 8 Gen 3 (`SM8650`)")
+          lines.append("> **Author:** Ha Nguyen ([@ngtrongha](https://github.com/ngtrongha))")
+          lines.append("> **Display Sync:** 120Hz LTPO & Anti-Flicker DC Dimming (Optimized for HyperOS 6.1.138 baseline)")
+          lines.append("> **Scheduler Engine:** BORE (Burst-Oriented Response Enhancer)")
+          lines.append("> **I/O Engine:** FUSE Passthrough enabled for UFS 4.0")
           lines.append("")
           lines.append("## Root")
           lines.append("")
