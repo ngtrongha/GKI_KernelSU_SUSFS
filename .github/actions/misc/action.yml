@@ -58,3 +58,6 @@ runs:
           CONFIG_ARCH_SUPPORTS_LTO_CLANG_THIN=y
           CONFIG_NET_SCH_FQ=y
           CONFIG_TCP_CONG_BBR=y
+          CONFIG_FUSE_FS=y
+          CONFIG_FUSE_PASSTHROUGH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
