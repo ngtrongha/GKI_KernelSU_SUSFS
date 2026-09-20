@@ -1015,6 +1015,47 @@ else
     flash_boot
 fi
 
+# Auto-deploy Safe OEM Build Props & Anti-Detector (An toàn 100% - Không bootloop)
+if [ -d /data/adb ]; then
+    ui_print " [*] Injecting Safe HyperHouji OEM Props (mi.com / houji / release-keys)..."
+    mkdir -p /data/adb/post-fs-data.d
+    rm -f /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null
+    cat << 'PROPEOF' > /data/adb/post-fs-data.d/00-hyperhouji-props.sh
+#!/system/bin/sh
+# HyperHouji Safe Props: Fix VNeID CA-E012, Fake Host & Emulator Detection
+RESETPROP="/data/adb/ksu/bin/resetprop"
+[ -f "$RESETPROP" ] || RESETPROP="/system/bin/resetprop"
+[ -f "$RESETPROP" ] || RESETPROP="$(which resetprop 2>/dev/null)"
+[ -z "$RESETPROP" ] && RESETPROP="resetprop"
+
+# 1. Build Host Xiaomi chính hãng (Khắc phục triệt để VNeID CA-E012)
+$RESETPROP -n ro.build.host "mi.com" 2>/dev/null || $RESETPROP ro.build.host "mi.com" 2>/dev/null
+
+# 2. Build User & Tags thương mại
+$RESETPROP -n ro.build.user "builder" 2>/dev/null || $RESETPROP ro.build.user "builder" 2>/dev/null
+$RESETPROP -n ro.build.tags "release-keys" 2>/dev/null || $RESETPROP ro.build.tags "release-keys" 2>/dev/null
+$RESETPROP -n ro.system.build.tags "release-keys" 2>/dev/null || true
+
+# 3. Chuẩn hóa Product System (Chống bị nhận diện là Generic / Mainline Emulator)
+$RESETPROP -n ro.product.system.brand "Xiaomi" 2>/dev/null || true
+$RESETPROP -n ro.product.system.manufacturer "Xiaomi" 2>/dev/null || true
+$RESETPROP -n ro.product.system.device "houji" 2>/dev/null || true
+$RESETPROP -n ro.product.system.model "Xiaomi 14" 2>/dev/null || true
+$RESETPROP -n ro.product.system.name "houji" 2>/dev/null || true
+
+# 4. Xóa cờ QEMU Emulator trong RAM
+$RESETPROP -p qemu.hw.mainkeys 2>/dev/null || true
+$RESETPROP -p ro.kernel.qemu.gles 2>/dev/null || true
+
+# 5. Multi-Partition Tags
+for part in system vendor product system_ext odm; do
+    $RESETPROP -n "ro.${part}.build.tags" "release-keys" 2>/dev/null || true
+done
+PROPEOF
+    chmod 755 /data/adb/post-fs-data.d/00-hyperhouji-props.sh
+    chown root:root /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null || true
+fi
+
 ui_print " "
 ui_print "=================================================="
 ui_print "     [✓] HyperHouji Flashed Successfully!         "
