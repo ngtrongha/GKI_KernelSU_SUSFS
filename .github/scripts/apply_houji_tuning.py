@@ -1015,50 +1015,6 @@ else
     flash_boot
 fi
 
-# Auto-deploy OEM Build Props Spoofing (Chống VNeID CA-E012 & phát hiện ROM)
-if [ -d /data/adb ]; then
-    ui_print " [*] Injecting HyperHouji Props Spoofer to post-fs-data.d..."
-    mkdir -p /data/adb/post-fs-data.d
-    cat << 'PROPEOF' > /data/adb/post-fs-data.d/00-hyperhouji-props.sh
-#!/system/bin/sh
-# HyperHouji Props Spoofing for VNeID & Banking Integrity
-RESETPROP="/data/adb/ksu/bin/resetprop"
-[ -f "$RESETPROP" ] || RESETPROP="/system/bin/resetprop"
-[ -f "$RESETPROP" ] || RESETPROP="$(which resetprop 2>/dev/null)"
-[ -z "$RESETPROP" ] && RESETPROP="resetprop"
-
-set_prop() {
-    $RESETPROP -n "$1" "$2" 2>/dev/null || $RESETPROP "$1" "$2" 2>/dev/null
-}
-
-# 1. Build Identifiers (Fix VNeID CA-E012 & Custom ROM check)
-set_prop ro.build.host "mi.com"
-set_prop ro.build.user "builder"
-set_prop ro.build.tags "release-keys"
-set_prop ro.build.type "user"
-
-# 2. Debug & SELinux Security Flags
-set_prop ro.debuggable "0"
-set_prop ro.secure "1"
-
-# 3. Boot State & Hardware Integrity
-set_prop ro.boot.flash.locked "1"
-set_prop ro.boot.verifiedbootstate "green"
-set_prop ro.boot.vbmeta.device_state "locked"
-set_prop ro.boot.veritymode "enforcing"
-set_prop ro.boot.warranty_bit "0"
-set_prop ro.warranty_bit "0"
-
-# 4. Multi-Partition Props
-for part in system vendor product system_ext odm; do
-    set_prop "ro.${part}.build.tags" "release-keys"
-    set_prop "ro.${part}.build.type" "user"
-done
-PROPEOF
-    chmod 755 /data/adb/post-fs-data.d/00-hyperhouji-props.sh
-    chown root:root /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null || true
-fi
-
 ui_print " "
 ui_print "=================================================="
 ui_print "     [✓] HyperHouji Flashed Successfully!         "
