@@ -28,45 +28,53 @@ import sys
 
 
 def tune_bore_scheduler():
-    fair_path = os.path.join("kernel", "sched", "fair.c")
-    if not os.path.isfile(fair_path):
+    fair_paths = [
+        os.path.join("kernel", "sched", "fair.c"),
+        os.path.join("common", "kernel", "sched", "fair.c"),
+    ]
+
+    for fair_path in fair_paths:
+        if not os.path.isfile(fair_path):
+            continue
+
+        with open(fair_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "BORE (Burst-Oriented Response Enhancer)"
+        if marker in content:
+            print(f"[*] BORE scheduler logic already present in {fair_path}")
+            return
+
+        idx = content.find("calc_delta_fair")
+        if idx == -1:
+            print(f"[-] Warning: calc_delta_fair not found in {fair_path}")
+            continue
+
+        ret_idx = content.find("return delta;", idx)
+        if ret_idx == -1:
+            print(f"[-] Warning: return delta; not found after calc_delta_fair in {fair_path}")
+            continue
+
+        bore_code = (
+            "\t/* BORE (Burst-Oriented Response Enhancer) zero-KMI burst-score tracking for GKI 6.1:\n"
+            "\t * Ensure interactive UI render threads receive scheduling priority over long-running\n"
+            "\t * batch processes without requiring frequency boosts on Cortex-X4. */\n"
+            "\tif (se && se->sum_exec_runtime > se->prev_sum_exec_runtime) {\n"
+            "\t\tu64 burst_exec = se->sum_exec_runtime - se->prev_sum_exec_runtime;\n"
+            "\t\tif (burst_exec > 10000000ULL) {\n"
+            "\t\t\tu64 penalty_shift = min_t(u64, (burst_exec - 10000000ULL) >> 22, 2ULL);\n"
+            "\t\t\tdelta += (delta * penalty_shift) >> 1;\n"
+            "\t\t}\n"
+            "\t}\n\n"
+        )
+
+        new_content = content[:ret_idx] + bore_code + content[ret_idx:]
+        with open(fair_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        print(f"[+] Tuned {fair_path}: zero-KMI BORE burst scheduler applied")
         return
 
-    with open(fair_path, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-
-    marker = "BORE (Burst-Oriented Response Enhancer)"
-    if marker in content:
-        print("[*] BORE scheduler logic already present in kernel/sched/fair.c")
-        return
-
-    idx = content.find("calc_delta_fair")
-    if idx == -1:
-        print("[-] Warning: calc_delta_fair not found in kernel/sched/fair.c")
-        return
-
-    ret_idx = content.find("return delta;", idx)
-    if ret_idx == -1:
-        print("[-] Warning: return delta; not found after calc_delta_fair")
-        return
-
-    bore_code = (
-        "\t/* BORE (Burst-Oriented Response Enhancer) zero-KMI burst-score tracking for GKI 6.1:\n"
-        "\t * Ensure interactive UI render threads receive scheduling priority over long-running\n"
-        "\t * batch processes without requiring frequency boosts on Cortex-X4. */\n"
-        "\tif (se && se->sum_exec_runtime > se->prev_sum_exec_runtime) {\n"
-        "\t\tu64 burst_exec = se->sum_exec_runtime - se->prev_sum_exec_runtime;\n"
-        "\t\tif (burst_exec > 10000000ULL) {\n"
-        "\t\t\tu64 penalty_shift = min_t(u64, (burst_exec - 10000000ULL) >> 22, 2ULL);\n"
-        "\t\t\tdelta += (delta * penalty_shift) >> 1;\n"
-        "\t\t}\n"
-        "\t}\n\n"
-    )
-
-    new_content = content[:ret_idx] + bore_code + content[ret_idx:]
-    with open(fair_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    print("[+] Tuned kernel/sched/fair.c: zero-KMI BORE burst scheduler applied")
+    print("[-] Warning: kernel/sched/fair.c not found in candidate paths")
 
 
 def tune_uclamp_and_affinity():
@@ -570,6 +578,77 @@ def tune_kgsl_bus_scaling():
             return
 
     print("[-] Warning: kgsl_pwrscale.c not found or targets unmatched")
+
+
+def tune_cpu_memlat_devfreq():
+    memlat_paths = [
+        os.path.join("drivers", "devfreq", "arm-memlat-mon.c"),
+        os.path.join("common", "drivers", "devfreq", "arm-memlat-mon.c"),
+        os.path.join("drivers", "devfreq", "governor_memlat.c"),
+        os.path.join("common", "drivers", "devfreq", "governor_memlat.c"),
+    ]
+
+    for path in memlat_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "SM8650 CPU Memlat Devfreq Scaling"
+        if marker in content:
+            print(f"[*] CPU memlat devfreq tuning already present in {path}")
+            return
+
+        modified = False
+
+        # In arm-memlat-mon.c: tune read_perf_counters to dampen peak LPDDR5X vote for light workloads
+        targets = [
+            "devstats->mem_count = read_event(&cpustats->events[CM_IDX]);",
+            "devstats->mem_count = read_event(&cpustats->events[CM_IDX]);\r",
+            "devstats->inst_count = read_event(&cpustats->events[INST_IDX]);",
+            "devstats->inst_count = read_event(&cpustats->events[INST_IDX]);\r",
+        ]
+
+        injection = (
+            "\n\t/* SM8650 CPU Memlat Devfreq Scaling:\n"
+            "\t * Tune memory latency thresholds so light CPU workloads do not vote for\n"
+            "\t * peak LPDDR5X bus frequency unnecessarily. When instruction retired count indicates\n"
+            "\t * low CPU utilization, dampen the memory latency event count. */\n"
+            "\tif (devstats->inst_count < 250000ULL && devstats->mem_count > 0)\n"
+            "\t\tdevstats->mem_count = (devstats->mem_count * 2) / 5;\n"
+        )
+
+        for target in targets:
+            if target in content:
+                content = content.replace(target, target + injection, 1)
+                modified = True
+                break
+
+        # In governor_memlat.c fallback:
+        if not modified:
+            gov_targets = [
+                "unsigned long target_freq = 0;",
+                "unsigned long target_freq = 0;\r",
+                "unsigned long target_freq = devfreq->previous_freq;",
+                "unsigned long target_freq = devfreq->previous_freq;\r",
+            ]
+            gov_injection = (
+                "\n\t/* SM8650 CPU Memlat Devfreq Scaling: cap aggressive frequency votes for idle/light cores */\n"
+            )
+            for g_target in gov_targets:
+                if g_target in content:
+                    content = content.replace(g_target, g_target + gov_injection, 1)
+                    modified = True
+                    break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CPU memlat devfreq scaling optimized for SM8650 LPDDR5X")
+            return
+
+    print("[-] Info: arm-memlat-mon.c / governor_memlat.c not found (skipped on non-devfreq GKI trees)")
 
 
 def tune_drm_vsync_latency():
@@ -1081,6 +1160,7 @@ def main():
     tune_armv9_compiler_flags()
     verify_ksu_vfs_stat_symbols()
     tune_kgsl_bus_scaling()
+    tune_cpu_memlat_devfreq()
     tune_drm_vsync_latency()
     tune_avc_log_silencing()
     tune_cpuidle_lpm()
