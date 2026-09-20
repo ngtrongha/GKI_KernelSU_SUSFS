@@ -1015,40 +1015,12 @@ else
     flash_boot
 fi
 
-# Cleanup any old dangerous post-fs-data.d scripts to instantly rescue from bootloop
+# Cleanup any leftover hyperhouji prop scripts from previous flashes
 if [ -d /data/adb ]; then
     rm -f /data/adb/post-fs-data.d/00-hyperhouji-props.sh 2>/dev/null || true
     rm -f /data/adb/post-fs-data.d/*hyperhouji* 2>/dev/null || true
-fi
-
-# Auto-deploy Safe OEM Build Props Spoofer via service.d (Non-blocking, 100% Safe)
-if [ -d /data/adb ]; then
-    ui_print " [*] Deploying Safe HyperHouji OEM Props Spoofer (service.d)..."
-    mkdir -p /data/adb/service.d
     rm -f /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
-    cat << 'PROPEOF' > /data/adb/service.d/00-hyperhouji-props.sh
-#!/system/bin/sh
-# HyperHouji Safe Props: Fix VNeID CA-E012 via late service.d (Non-blocking)
-sleep 2
-
-RESETPROP=""
-for p in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop /data/adb/magisk/resetprop /system/bin/resetprop; do
-    if [ -x "$p" ]; then
-        RESETPROP="$p"
-        break
-    fi
-done
-
-[ -z "$RESETPROP" ] && exit 0
-
-# Spoof OEM host to mi.com to resolve VNeID CA-E012
-$RESETPROP -n ro.build.host "mi.com" 2>/dev/null || true
-$RESETPROP -n ro.build.user "builder" 2>/dev/null || true
-$RESETPROP -n ro.build.tags "release-keys" 2>/dev/null || true
-PROPEOF
-    chmod 755 /data/adb/service.d/00-hyperhouji-props.sh
-    chown root:root /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
-    chcon u:object_r:adb_data_file:s0 /data/adb/service.d/00-hyperhouji-props.sh 2>/dev/null || true
+    rm -f /data/adb/service.d/*hyperhouji* 2>/dev/null || true
 fi
 
 ui_print " "
