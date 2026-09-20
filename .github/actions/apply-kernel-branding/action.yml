@@ -17,9 +17,9 @@ inputs:
     description: 'Sublevel of kernel version (e.g., 1)'
     required: true
   brand_name:
-    description: 'Branding text appended to the version (e.g., Wild)'
+    description: 'Branding text appended to the version (e.g., HyperHouji)'
     required: false
-    default: Wild
+    default: HyperHouji
 
 runs:
   using: "composite"
@@ -40,3 +40,27 @@ runs:
           sed -i '$d' scripts/setlocalversion && echo "echo \"-$ANDROID_PART-$BRAND\"" >> scripts/setlocalversion
         fi
         chmod +x scripts/setlocalversion
+
+    - name: Customize AnyKernel3 Flash Interface for HyperHouji
+      shell: bash
+      run: |
+        AK3_DIR="${{ github.workspace }}/AnyKernel3"
+        if [ -d "$AK3_DIR" ]; then
+          echo "[*] Customizing AnyKernel3 flash interface for HyperHouji..."
+          cat <<'EOF' > "$AK3_DIR/banner"
+ _   _                       _   _             _ _ 
+| | | |_   _ _ __   ___ _ __| | | | ___  _   _(_|_)
+| |_| | | | | '_ \ / _ \ '__| |_| |/ _ \| | | | | |
+|  _  | |_| | |_) |  __/ |  |  _  | (_) | |_| | | |
+|_| |_|\__, | .__/ \___|_|  |_| |_|\___/ \__,_|_|/ 
+       |___/|_|                                |__/ 
+               K   E   R   N   E   L
+EOF
+          AK3_SH="$AK3_DIR/anykernel.sh"
+          if [ -f "$AK3_SH" ]; then
+            sed -i 's/^kernel\.string=.*/kernel.string=HyperHouji Kernel for Xiaomi 14 (houji) by Ha Nguyen/' "$AK3_SH"
+            sed -i 's/^device\.name1=.*/device.name1=houji/' "$AK3_SH"
+            sed -i 's/^device\.name2=.*/device.name2=Xiaomi 14/' "$AK3_SH"
+            sed -i 's/^device\.name3=.*/device.name3=23127PN0CC/' "$AK3_SH"
+          fi
+        fi

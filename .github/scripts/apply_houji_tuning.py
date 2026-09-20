@@ -234,6 +234,8 @@ def tune_susfs_uname_stealth():
                 "\tif (tag) *tag = '\\0';\n"
                 '\ttag = strstr(clean_release, "-Wild");\n'
                 "\tif (tag) *tag = '\\0';\n"
+                '\ttag = strstr(clean_release, "-HyperHouji");\n'
+                "\tif (tag) *tag = '\\0';\n"
             )
             if target in c:
                 c = c.replace(target, cleaner, 1)
@@ -265,6 +267,8 @@ def tune_susfs_uname_stealth():
                     '\t\ttag = strstr(tmp.release, "-houji-tuning");\n'
                     "\t\tif (tag) *tag = '\\0';\n"
                     '\t\ttag = strstr(tmp.release, "-Wild");\n'
+                    "\t\tif (tag) *tag = '\\0';\n"
+                    '\t\ttag = strstr(tmp.release, "-HyperHouji");\n'
                     "\t\tif (tag) *tag = '\\0';\n"
                     "\t}\n"
                     "\t" + copy_target
@@ -935,6 +939,103 @@ def tune_fuse_passthrough_defconfig():
     print("[-] Warning: gki_defconfig not found or targets unmatched")
 
 
+def tune_anykernel_branding():
+    ak3_dirs = [
+        "AnyKernel3",
+        os.path.join("..", "AnyKernel3"),
+        os.path.join("..", "..", "AnyKernel3"),
+    ]
+
+    for ak3_dir in ak3_dirs:
+        ak3_sh = os.path.join(ak3_dir, "anykernel.sh")
+        if not os.path.isfile(ak3_sh):
+            continue
+
+        with open(ak3_sh, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "HyperHouji Kernel for Xiaomi 14"
+        if marker in content:
+            print(f"[*] AnyKernel3 HyperHouji branding already present in {ak3_sh}")
+            return
+
+        # 1. Update kernel.string and device names
+        lines = content.splitlines(keepends=True)
+        new_lines = []
+        for line in lines:
+            if line.startswith("kernel.string="):
+                new_lines.append("kernel.string=HyperHouji Kernel for Xiaomi 14 (houji) by Ha Nguyen\n")
+            elif line.startswith("device.name1="):
+                new_lines.append("device.name1=houji\n")
+            elif line.startswith("device.name2="):
+                new_lines.append("device.name2=Xiaomi 14\n")
+            elif line.startswith("device.name3="):
+                new_lines.append("device.name3=23127PN0CC\n")
+            else:
+                new_lines.append(line)
+        content = "".join(new_lines)
+
+        # 2. Inject UI banner
+        target_import = ". tools/ak3-core.sh"
+        ui_block = (
+            '\n\nui_print " "\n'
+            'ui_print " _   _                       _   _             _ _ "\n'
+            'ui_print "| | | |_   _ _ __   ___ _ __| | | | ___  _   _(_|_)"\n'
+            'ui_print "| |_| | | | | \'_ \\ / _ \\ \'__| |_| |/ _ \\| | | | | |"\n'
+            'ui_print "|  _  | |_| | |_) |  __/ |  |  _  | (_) | |_| | | |"\n'
+            'ui_print "|_| |_|\\__, | .__/ \\___|_|  |_| |_|\\___/ \\__,_|_|/ "\n'
+            'ui_print "       |___/|_|                                |__/ "\n'
+            'ui_print "               K   E   R   N   E   L"\n'
+            'ui_print "=================================================="\n'
+            'ui_print "          HyperHouji Kernel for Xiaomi 14         "\n'
+            'ui_print "       Qualcomm Snapdragon 8 Gen 3 (SM8650)       "\n'
+            'ui_print "         Crafted by Ha Nguyen (@ngtrongha)        "\n'
+            'ui_print "=================================================="\n'
+            'ui_print "[*] Target Device : Xiaomi 14 (houji)"\n'
+            'ui_print "[*] Platform      : SM8650 (ARMv9.2-A + Crypto)"\n'
+            'ui_print "[*] Compiler      : Clang ThinLTO (Optimized)"\n'
+            'ui_print "[*] Scheduler     : Zero-KMI BORE Burst Engine"\n'
+            'ui_print "[*] Display Sync  : 120Hz LTPO & Anti-Flicker DC"\n'
+            'ui_print "[*] Storage I/O   : FUSE Passthrough & UFS 4.0"\n'
+            'ui_print "[*] Security      : KernelSU + Stealth SUS_MOUNT"\n'
+            'ui_print "=================================================="\n'
+            'ui_print " "'
+        )
+
+        if target_import in content:
+            content = content.replace(target_import, target_import + ui_block, 1)
+
+        completion_block = (
+            '\n\nui_print " "\n'
+            'ui_print "=================================================="\n'
+            'ui_print "     [✓] HyperHouji Flashed Successfully!        "\n'
+            'ui_print "     [i] Reboot system and enjoy 120Hz LTPO!     "\n'
+            'ui_print "=================================================="\n'
+            'ui_print " "\n'
+        )
+        content += completion_block
+
+        with open(ak3_sh, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # Write banner file
+        banner_path = os.path.join(ak3_dir, "banner")
+        banner_art = (
+            " _   _                       _   _             _ _ \n"
+            "| | | |_   _ _ __   ___ _ __| | | | ___  _   _(_|_)\n"
+            "| |_| | | | | '_ \\ / _ \\ '__| |_| |/ _ \\| | | | | |\n"
+            "|  _  | |_| | |_) |  __/ |  |  _  | (_) | |_| | | |\n"
+            "|_| |_|\\__, | .__/ \\___|_|  |_| |_|\\___/ \\__,_|_|/ \n"
+            "       |___/|_|                                |__/ \n"
+            "               K   E   R   N   E   L\n"
+        )
+        with open(banner_path, "w", encoding="utf-8") as f:
+            f.write(banner_art)
+
+        print(f"[+] Customized {ak3_dir}: HyperHouji banner & flash UI applied")
+        return
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -957,6 +1058,7 @@ def main():
     guard_display_brightness_flicker()
     verify_susfs_sus_mount()
     tune_fuse_passthrough_defconfig()
+    tune_anykernel_branding()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
