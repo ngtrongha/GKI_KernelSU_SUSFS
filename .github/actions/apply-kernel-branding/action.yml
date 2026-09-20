@@ -44,23 +44,7 @@ runs:
     - name: Customize AnyKernel3 Flash Interface for HyperHouji
       shell: bash
       run: |
-        AK3_DIR="${{ github.workspace }}/AnyKernel3"
-        if [ -d "$AK3_DIR" ]; then
-          echo "[*] Customizing AnyKernel3 flash interface for HyperHouji..."
-          cat <<'EOF' > "$AK3_DIR/banner"
- _   _                       _   _             _ _ 
-| | | |_   _ _ __   ___ _ __| | | | ___  _   _(_|_)
-| |_| | | | | '_ \ / _ \ '__| |_| |/ _ \| | | | | |
-|  _  | |_| | |_) |  __/ |  |  _  | (_) | |_| | | |
-|_| |_|\__, | .__/ \___|_|  |_| |_|\___/ \__,_|_|/ 
-       |___/|_|                                |__/ 
-               K   E   R   N   E   L
-EOF
-          AK3_SH="$AK3_DIR/anykernel.sh"
-          if [ -f "$AK3_SH" ]; then
-            sed -i 's/^kernel\.string=.*/kernel.string=HyperHouji Kernel for Xiaomi 14 (houji) by Ha Nguyen/' "$AK3_SH"
-            sed -i 's/^device\.name1=.*/device.name1=houji/' "$AK3_SH"
-            sed -i 's/^device\.name2=.*/device.name2=Xiaomi 14/' "$AK3_SH"
-            sed -i 's/^device\.name3=.*/device.name3=23127PN0CC/' "$AK3_SH"
-          fi
+        if [ -f "${{ github.workspace }}/.github/scripts/apply_houji_tuning.py" ]; then
+          python3 -c "import sys; sys.path.insert(0, '${{ github.workspace }}/.github/scripts'); import apply_houji_tuning; apply_houji_tuning.tune_anykernel_branding()" || true
         fi
+
