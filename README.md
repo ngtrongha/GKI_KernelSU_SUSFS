@@ -77,20 +77,27 @@ It combines cutting-edge scheduler enhancements (Zero-KMI BORE Engine), custom m
 
 ## 📋 Feature Matrix
 
-| Feature | Upstream GKI | WildKernels | HyperHouji (This Repo) |
-| :--- | :---: | :---: | :---: |
-| **Target Device** | Generic | Generic GKI | **Xiaomi 14 (`houji` / SM8650)** |
-| **Scheduler Engine** | Stock CFS / EEVDF | Stock / CFS | **Zero-KMI BORE Burst (120Hz EEVDF)** |
-| **Cortex-X4 CPU 7 Masking** | ❌ No | ❌ No | **✅ Yes (`uclamp` background filter)** |
-| **Display Flicker Guard** | ❌ No | ❌ No (Issue #283) | **✅ Yes (TCL C8 OLED Patched)** |
-| **FUSE Passthrough** | ❌ No | Config fragment | **✅ Built-in (Defconfig + VFS Hook)** |
-| **UFS 4.0 F2FS Tuning** | ❌ No | ❌ No | **✅ Yes (Age thresholds elevated)** |
-| **Schedutil iowait Dampening**| ❌ No | ❌ No | **✅ Yes (Prevents Cortex-X4 spikes)** |
-| **LPM Idle C-States** | Stock | Stock | **✅ Tuned (25% faster PC entry)** |
-| **Root Solution** | None | Multi-flavor | **KernelSU-Next / ReSukiSU** |
-| **SUSFS Version** | None | v1.5.x | **v1.5.x + SUS_MOUNT + Stealth Uname** |
-| **Compiler Optimization** | Standard LTO | Standard LTO | **ThinLTO + ARMv9.2-A + Crypto + DotProd** |
-| **AnyKernel3 Flash Screen** | Generic | WildKernels | **Custom HyperHouji ASCII Art & Spec UI** |
+| Subsystem / Area | Feature | Status | Implementation Details |
+| :--- | :--- | :---: | :--- |
+| **CPU Scheduling** | Zero-KMI BORE Burst Engine | ✅ Active | Dynamic burst-score tracking for 120Hz EEVDF UI frame delivery |
+| **Core Isolation** | Cortex-X4 Prime Core Protection | ✅ Active | `uclamp.max = 400` cap and CPU 7 exclusion for background tasks |
+| **CPU Governors** | Schedutil iowait Dampening | ✅ Active | Suppresses artificial frequency spikes triggered by UFS 4.0 flash I/O |
+| **Power & Idle** | CPUIdle Low-Power Mode (LPM) | ✅ Active | 25% lower target residency at low load (< 5%) for faster Power Collapse |
+| **GPU & Bus** | KGSL Interconnect Bus Scaling | ✅ Active | Tuned DDR bus table preventing 2D rendering from requesting peak freq |
+| **Display** | OLED DC-Dimming Anti-Flickering | ✅ Active | Suppresses redundant backlight updates for TCL C8 1.5K 120Hz LTPO |
+| **Display** | DRM VSync Latency Reduction | ✅ Active | Streamlines fence signaling between SurfaceFlinger and display hardware |
+| **Storage** | FUSE Passthrough Engine | ✅ Active | Zero-copy VFS passthrough for Android 14/15 MediaProvider storage daemon |
+| **Storage** | F2FS UFS 4.0 Flash Tuning | ✅ Active | Elevated data age thresholds (2GB hot / 20GB warm) for UFS 4.0 storage |
+| **Memory** | ZRAM ZSTD Multi-Compression | ✅ Active | Native ZSTD compression default with concurrent multi-comp streams |
+| **Memory** | Low-Latency 4KB Swap-In | ✅ Active | `page_cluster = 0` for direct single-page reads from ZRAM swap |
+| **Memory** | SLUB Tri-Cluster Optimization | ✅ Active | Tuned `cpu_partial` ladder (4, 12, 26, 60) for 1+5+2 tri-cluster layout |
+| **Networking** | BBRv3 + FQ / RPS Steering | ✅ Active | Advanced packet pacing + softirq steering to Little cores (CPUs 0-1) |
+| **Root Security** | KernelSU-Next / ReSukiSU | ✅ Active | Next-generation kernel-level root privilege management |
+| **Root Stealth** | SUSFS v1.5.x with SUS_MOUNT | ✅ Active | Conceals all KSU/overlay mounts from `/proc/self/mountinfo` & `mountstats` |
+| **Anti-Detection** | Dynamic Uname & Version Spoofing | ✅ Active | Automatically purges `-HyperHouji` from `/proc/version` & `sys_newuname` |
+| **Anti-Detection** | AVC Silencing & Symbol Hiding | ✅ Active | Strips `ksu_*`/`susfs_*` from `/proc/kallsyms` and silences audit denial logs |
+| **Toolchain** | Clang ThinLTO + ARMv9.2-A | ✅ Active | `-march=armv9.2-a+crypto+dotprod` targeting Snapdragon 8 Gen 3 |
+| **Flashing UI** | AnyKernel3 HyperHouji Banner | ✅ Active | Custom ASCII art banner, device verification, and live feature matrix |
 
 ---
 
