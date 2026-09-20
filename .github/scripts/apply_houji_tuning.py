@@ -16,10 +16,11 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - KGSL Interconnect Bus Scaling for Adreno 750 (drivers/gpu/msm/kgsl_pwrscale.c)
 - Display & DRM VSync Frame Pacing for 120Hz LTPO (drivers/gpu/drm/msm/sde/)
 - SUSFS & KernelSU SELinux AVC Log Concealment (security/selinux/avc.c, fs/susfs.c)
-- CPUIdle Low-Power Mode (LPM) Residency Tuning (drivers/cpuidle/governors/menu.c)
+- CPUIdle Low-Power Mode (LPM) Residency Tuning when load < 5% (drivers/cpuidle/governors/menu.c)
 - SLUB Allocator per-CPU partial tuning (mm/slub.c)
 - Xiaomi 14 (houji) Display Brightness Flicker Prevention (drivers/video/backlight/backlight.c)
 - SUSFS SUS_MOUNT Stealth Verification (fs/susfs.c)
+- FUSE Passthrough defconfig configuration (arch/arm64/configs/gki_defconfig)
 """
 
 import os
@@ -50,8 +51,10 @@ def tune_bore_scheduler():
         return
 
     bore_code = (
-        "\t/* BORE (Burst-Oriented Response Enhancer) zero-KMI burst logic for GKI 6.1 */\n"
-        "\tif (se->sum_exec_runtime > se->prev_sum_exec_runtime) {\n"
+        "\t/* BORE (Burst-Oriented Response Enhancer) zero-KMI burst-score tracking for GKI 6.1:\n"
+        "\t * Ensure interactive UI render threads receive scheduling priority over long-running\n"
+        "\t * batch processes without requiring frequency boosts on Cortex-X4. */\n"
+        "\tif (se && se->sum_exec_runtime > se->prev_sum_exec_runtime) {\n"
         "\t\tu64 burst_exec = se->sum_exec_runtime - se->prev_sum_exec_runtime;\n"
         "\t\tif (burst_exec > 10000000ULL) {\n"
         "\t\t\tu64 penalty_shift = min_t(u64, (burst_exec - 10000000ULL) >> 22, 2ULL);\n"
@@ -706,10 +709,12 @@ def tune_cpuidle_lpm():
         ]
 
         tuned_ns = (
-            "/* SM8650 CPUIdle LPM residency tuning: allow Cortex-X4 (CPU 7) and A720 (CPUs 4-6) to enter Power Collapse (PC) faster during micro-idle */\n"
+            "/* SM8650 CPUIdle LPM residency tuning: allow Cortex-X4 (CPU 7) and A720 (CPUs 4-6) to enter Power Collapse (PC) faster during micro-idle when system load is below 5% */\n"
             "\t\tu64 residency_thresh = s->target_residency_ns;\n"
-            "\t\tif (dev && dev->cpu >= 4 && i > 0)\n"
-            "\t\t\tresidency_thresh = (residency_thresh * 3) >> 2;\n"
+            "\t\tif (dev && dev->cpu >= 4 && i > 0) {\n"
+            "\t\t\tif (!data->loadavg || data->loadavg <= 50)\n"
+            "\t\t\t\tresidency_thresh = (residency_thresh * 3) >> 2;\n"
+            "\t\t}\n"
             "\t\tif (residency_thresh > data->predicted_ns)\n"
             "\t\t\tcontinue;"
         )
@@ -728,10 +733,12 @@ def tune_cpuidle_lpm():
                 "if (s->target_residency > data->predicted_us)\r\n\t\t\tcontinue;",
             ]
             tuned_us = (
-                "/* SM8650 CPUIdle LPM residency tuning: allow Cortex-X4 (CPU 7) and A720 (CPUs 4-6) to enter Power Collapse (PC) faster during micro-idle */\n"
+                "/* SM8650 CPUIdle LPM residency tuning: allow Cortex-X4 (CPU 7) and A720 (CPUs 4-6) to enter Power Collapse (PC) faster during micro-idle when system load is below 5% */\n"
                 "\t\tunsigned int residency_thresh = s->target_residency;\n"
-                "\t\tif (dev && dev->cpu >= 4 && i > 0)\n"
-                "\t\t\tresidency_thresh = (residency_thresh * 3) >> 2;\n"
+                "\t\tif (dev && dev->cpu >= 4 && i > 0) {\n"
+                "\t\t\tif (!data->loadavg || data->loadavg <= 50)\n"
+                "\t\t\t\tresidency_thresh = (residency_thresh * 3) >> 2;\n"
+                "\t\t}\n"
                 "\t\tif (residency_thresh > data->predicted_us)\n"
                 "\t\t\tcontinue;"
             )
@@ -895,6 +902,39 @@ def verify_susfs_sus_mount():
     print("[+] Verified fs/susfs.c: SUSFS SUS_MOUNT stealth logic confirmed for module cloaking")
 
 
+def tune_fuse_passthrough_defconfig():
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "CONFIG_FUSE_PASSTHROUGH=y"
+        if marker in content:
+            print(f"[*] FUSE passthrough already present in {path}")
+            return
+
+        fuse_configs = (
+            "\n# FUSE Passthrough support for Android 14/15 MediaProvider zero-copy I/O\n"
+            "CONFIG_FUSE_FS=y\n"
+            "CONFIG_FUSE_PASSTHROUGH=y\n"
+        )
+
+        content += fuse_configs
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: FUSE passthrough configs enabled in defconfig")
+        return
+
+    print("[-] Warning: gki_defconfig not found or targets unmatched")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -916,6 +956,7 @@ def main():
     tune_slub_allocator()
     guard_display_brightness_flicker()
     verify_susfs_sus_mount()
+    tune_fuse_passthrough_defconfig()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
