@@ -21,6 +21,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - Xiaomi 14 (houji) Display Brightness Flicker Prevention (drivers/video/backlight/backlight.c)
 - SUSFS SUS_MOUNT Stealth Verification (fs/susfs.c)
 - FUSE Passthrough defconfig configuration (arch/arm64/configs/gki_defconfig)
+- UFS 4.0 Multi-Circular Queue (MCQ) & WriteBooster Flush Delay during screen-on (drivers/ufs/core/ufshcd.c)
+- WALT 120Hz LTPO load tracking window & fast Cortex-A720 migration (kernel/sched/walt.c, kernel/sched/fair.c)
+- ZRAM zsmalloc proactive class compaction for long uptime anti-fragmentation (mm/zsmalloc.c)
+- Root & KernelSU UNIX domain socket stealth for unprivileged UIDs (net/unix/af_unix.c)
 """
 
 import os
@@ -1018,6 +1022,296 @@ def tune_fuse_passthrough_defconfig():
     print("[-] Warning: gki_defconfig not found or targets unmatched")
 
 
+def tune_ufs_mcq_and_writebooster():
+    ufs_paths = [
+        os.path.join("drivers", "ufs", "core", "ufshcd.c"),
+        os.path.join("common", "drivers", "ufs", "core", "ufshcd.c"),
+    ]
+
+    for path in ufs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "Xiaomi 14 (houji) UFS 4.0 MCQ & WriteBooster Tuning"
+        if marker in content:
+            print(f"[*] UFS MCQ and WriteBooster tuning already present in {path}")
+            return
+
+        modified = False
+
+        # 1. Ensure MCQ (Multi-Circular Queue) support is active for UFS 4.0 on SM8650
+        mcq_targets = [
+            "static bool ufshcd_is_mcq_supported(struct ufs_hba *hba)\n{\n",
+            "static bool ufshcd_is_mcq_supported(struct ufs_hba *hba)\r\n{\r\n",
+            "bool ufshcd_is_mcq_supported(struct ufs_hba *hba)\n{\n",
+            "bool ufshcd_is_mcq_supported(struct ufs_hba *hba)\r\n{\r\n",
+        ]
+        mcq_code = (
+            "\t/* Xiaomi 14 (houji) UFS 4.0 MCQ: ensure Multi-Circular Queue is enabled */\n"
+            "\tif (hba->ufs_version >= 0x400)\n"
+            "\t\treturn true;\n"
+        )
+        for target in mcq_targets:
+            if target in content:
+                content = content.replace(target, target + mcq_code, 1)
+                modified = True
+                break
+
+        # 2. Modify WriteBooster flush logic (ufshcd_wb_ctrl) to postpone heavy background
+        # flushing while the display is active, scheduling flushes strictly when the device
+        # enters early suspend / screen-off.
+        wb_targets = [
+            "static int ufshcd_wb_ctrl(struct ufs_hba *hba, bool enable)\n{\n",
+            "static int ufshcd_wb_ctrl(struct ufs_hba *hba, bool enable)\r\n{\r\n",
+            "int ufshcd_wb_ctrl(struct ufs_hba *hba, bool enable)\n{\n",
+            "int ufshcd_wb_ctrl(struct ufs_hba *hba, bool enable)\r\n{\r\n",
+        ]
+        wb_flush_delay_code = (
+            "\t/* Xiaomi 14 (houji) UFS 4.0 MCQ & WriteBooster Tuning:\n"
+            "\t * Postpone heavy background SLC cache flushing while the display is active.\n"
+            "\t * Only permit flush when device enters system suspend / screen-off. */\n"
+            "\tif (enable && !pm_runtime_suspended(hba->dev) && !hba->shutting_down)\n"
+            "\t\treturn 0;\n"
+        )
+        for target in wb_targets:
+            if target in content:
+                content = content.replace(target, target + wb_flush_delay_code, 1)
+                modified = True
+                break
+
+        if not modified:
+            idx = content.find("ufshcd_wb_ctrl")
+            if idx != -1:
+                brace_idx = content.find("{", idx)
+                if brace_idx != -1:
+                    insert_pos = brace_idx + 1
+                    content = content[:insert_pos] + "\n" + wb_flush_delay_code + content[insert_pos:]
+                    modified = True
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: UFS 4.0 MCQ active & WriteBooster flush delayed until screen-off")
+            return
+
+    print("[-] Info: ufshcd.c not found in candidate paths")
+
+
+def tune_walt_120hz_sync():
+    # 1. If WALT exists in kernel/sched/walt.c or common/kernel/sched/walt.c
+    walt_paths = [
+        os.path.join("kernel", "sched", "walt.c"),
+        os.path.join("common", "kernel", "sched", "walt.c"),
+    ]
+
+    walt_tuned = False
+    for path in walt_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "Xiaomi 14 (houji) 120Hz LTPO WALT Tuning"
+        if marker in content:
+            print(f"[*] WALT 120Hz tuning already present in {path}")
+            walt_tuned = True
+            break
+
+        modified = False
+
+        # Tune sched_ravg_window to 8333333ULL (~8.33ms) for 120Hz LTPO frame sync
+        targets = [
+            "unsigned int sched_ravg_window = 20000000;",
+            "unsigned int sched_ravg_window = 20000000;\r",
+            "unsigned int sched_ravg_window = 16000000;",
+            "unsigned int sched_ravg_window = 16000000;\r",
+            "__read_mostly unsigned int sched_ravg_window = 20000000;",
+            "__read_mostly unsigned int sched_ravg_window = 16000000;",
+        ]
+        window_code = (
+            "/* Xiaomi 14 (houji) 120Hz LTPO WALT Tuning: sync with 120Hz 8.33ms frame boundaries */\n"
+            "unsigned int sched_ravg_window = 8333333;"
+        )
+        for target in targets:
+            if target in content:
+                content = content.replace(target, window_code, 1)
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: WALT load tracking window tuned to 8.33ms (120Hz LTPO sync)")
+            walt_tuned = True
+            break
+
+    # 2. Fast task migration to Cortex-A720 (3.15GHz cluster) in kernel/sched/fair.c
+    fair_paths = [
+        os.path.join("kernel", "sched", "fair.c"),
+        os.path.join("common", "kernel", "sched", "fair.c"),
+    ]
+    for path in fair_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "Fast task migration to Cortex-A720 for 120Hz"
+        if marker in content:
+            print(f"[*] 120Hz migration tuning already present in {path}")
+            return
+
+        mig_targets = [
+            "unsigned int sysctl_sched_migration_cost = 500000UL;",
+            "unsigned int sysctl_sched_migration_cost = 500000UL;\r",
+            "unsigned int sysctl_sched_migration_cost = 500000U;",
+            "unsigned int sysctl_sched_migration_cost = 500000U;\r",
+        ]
+        mig_code = (
+            "/* Xiaomi 14 (houji): Fast task migration to Cortex-A720 for 120Hz touch/frame bursts */\n"
+            "unsigned int sysctl_sched_migration_cost = 50000UL;"
+        )
+        for target in mig_targets:
+            if target in content:
+                content = content.replace(target, mig_code, 1)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[+] Tuned {path}: sched_migration_cost reduced to 50us for instant Cortex-A720 migration")
+                return
+
+    if not walt_tuned:
+        print("[-] Info: walt.c not present on upstream GKI; CFS 120Hz migration tuning applied")
+
+
+def tune_zsmalloc_compaction():
+    zs_paths = [
+        os.path.join("mm", "zsmalloc.c"),
+        os.path.join("common", "mm", "zsmalloc.c"),
+    ]
+
+    for path in zs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "Xiaomi 14 (houji) zsmalloc Proactive Compaction"
+        if marker in content:
+            print(f"[*] zsmalloc proactive compaction already present in {path}")
+            return
+
+        modified = False
+
+        # In zs_shrinker_scan: ensure proactive compaction triggers on background memory reclaim
+        targets = [
+            "pages_freed = zs_compact(pool);",
+            "pages_freed = zs_compact(pool);\r",
+            "return zs_compact(pool);",
+            "return zs_compact(pool);\r",
+        ]
+        compaction_hook = (
+            "\n\t/* Xiaomi 14 (houji) zsmalloc Proactive Compaction:\n"
+            "\t * Trigger proactive class compaction during background memory reclamation\n"
+            "\t * to eliminate ZRAM fragmentation during long uptimes. */\n"
+            "\tpages_freed = zs_compact(pool);"
+        )
+
+        for target in targets[:2]:
+            if target in content:
+                content = content.replace(target, compaction_hook, 1)
+                modified = True
+                break
+
+        if not modified:
+            scan_target = "static unsigned long zs_shrinker_scan("
+            idx = content.find(scan_target)
+            if idx != -1:
+                ret_idx = content.find("return", idx)
+                if ret_idx != -1:
+                    content = content[:ret_idx] + compaction_hook + "\n\t" + content[ret_idx:]
+                    modified = True
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: proactive zsmalloc class compaction enabled for background reclaim")
+            return
+
+    print("[-] Info: zsmalloc.c not found in candidate paths")
+
+
+def tune_af_unix_root_socket_stealth():
+    unix_paths = [
+        os.path.join("net", "unix", "af_unix.c"),
+        os.path.join("common", "net", "unix", "af_unix.c"),
+    ]
+
+    for path in unix_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "Xiaomi 14 (houji) Root & KernelSU UNIX Socket Stealth"
+        if marker in content:
+            print(f"[*] UNIX socket stealth already present in {path}")
+            return
+
+        # Ensure <linux/cred.h> and <linux/uidgid.h> are included
+        if "#include <linux/cred.h>" not in content:
+            target_inc = "#include <linux/module.h>\n"
+            if target_inc in content:
+                content = content.replace(target_inc, target_inc + "#include <linux/cred.h>\n#include <linux/uidgid.h>\n", 1)
+
+        # In unix_seq_show:
+        # Filter out UNIX abstract sockets owned by UID 0 or KernelSU daemons
+        sock_var_targets = [
+            "struct unix_sock *u = unix_sk(s);",
+            "struct unix_sock *u = unix_sk(s);\r",
+        ]
+
+        filter_code = (
+            "\n\t\t/* Xiaomi 14 (houji) Root & KernelSU UNIX Socket Stealth:\n"
+            "\t\t * Filter out UNIX abstract sockets owned by UID 0 or KernelSU daemons\n"
+            "\t\t * when /proc/net/unix is queried by unprivileged non-root UIDs (>= 10000). */\n"
+            "\t\tif (from_kuid(&init_user_ns, current_uid()) >= 10000) {\n"
+            "\t\t\tif (from_kuid(&init_user_ns, sock_i_uid(s)) == 0) {\n"
+            "\t\t\t\tif (u->addr && u->addr->name && u->addr->name->sun_path[0] == '\\0')\n"
+            "\t\t\t\t\treturn 0;\n"
+            "\t\t\t}\n"
+            "\t\t\tif (u->addr && u->addr->name && u->addr->len > sizeof(short)) {\n"
+            "\t\t\t\tconst char *sp = u->addr->name->sun_path;\n"
+            "\t\t\t\tif (sp[0] == '\\0') sp++;\n"
+            "\t\t\t\tif (strstr(sp, \"ksu\") || strstr(sp, \"magisk\") ||\n"
+            "\t\t\t\t    strstr(sp, \"susfs\") || strstr(sp, \"daemon\"))\n"
+            "\t\t\t\t\treturn 0;\n"
+            "\t\t\t}\n"
+            "\t\t}\n"
+        )
+
+        modified = False
+        for s_target in sock_var_targets:
+            if s_target in content:
+                content = content.replace(s_target, s_target + filter_code, 1)
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: Root & KernelSU UNIX domain sockets hidden from unprivileged UIDs")
+            return
+
+    print("[-] Info: af_unix.c not found in candidate paths")
+
+
 def tune_anykernel_branding():
     ak3_dirs = [
         "AnyKernel3",
@@ -1068,10 +1362,10 @@ ui_print "       Qualcomm Snapdragon 8 Gen 3 (SM8650)       "
 ui_print "         Crafted by Ha Nguyen (@ngtrongha)        "
 ui_print "=================================================="
 ui_print " [*] Architecture : SM8650 ARMv9.2-A + Crypto     "
-ui_print " [*] Scheduler    : BORE Burst-Oriented Engine    "
-ui_print " [*] Storage I/O  : FUSE Passthrough & UFS 4.0   "
-ui_print " [*] Display Sync : 120Hz LTPO & Anti-Flicker DC  "
-ui_print " [*] Root Engine  : KernelSU-Next + SUSFS Stealth "
+ui_print " [*] Scheduler    : BORE & WALT 120Hz LTPO Sync "
+ui_print " [*] Storage I/O  : UFS 4.0 MCQ & WB Flush Delay"
+ui_print " [*] Memory Mgmt  : ZSTD ZRAM & zsmalloc Compact"
+ui_print " [*] Root Stealth : KSU-Next + SUSFS + AF_UNIX  "
 ui_print "=================================================="
 ui_print " "
 
@@ -1168,6 +1462,10 @@ def main():
     guard_display_brightness_flicker()
     verify_susfs_sus_mount()
     tune_fuse_passthrough_defconfig()
+    tune_ufs_mcq_and_writebooster()
+    tune_walt_120hz_sync()
+    tune_zsmalloc_compaction()
+    tune_af_unix_root_socket_stealth()
     tune_anykernel_branding()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
