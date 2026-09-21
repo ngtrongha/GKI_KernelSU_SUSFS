@@ -1026,7 +1026,19 @@ def tune_ufs_mcq_and_writebooster():
     ufs_paths = [
         os.path.join("drivers", "ufs", "core", "ufshcd.c"),
         os.path.join("common", "drivers", "ufs", "core", "ufshcd.c"),
+        os.path.join("drivers", "scsi", "ufs", "ufshcd.c"),
+        os.path.join("common", "drivers", "scsi", "ufs", "ufshcd.c"),
+        os.path.join("drivers", "ufs", "ufshcd.c"),
+        os.path.join("common", "drivers", "ufs", "ufshcd.c"),
     ]
+
+    for search_dir in [".", "common"]:
+        if os.path.isdir(search_dir):
+            for root, dirs, files in os.walk(search_dir):
+                if "ufshcd.c" in files:
+                    p = os.path.join(root, "ufshcd.c")
+                    if p not in ufs_paths:
+                        ufs_paths.append(p)
 
     for path in ufs_paths:
         if not os.path.isfile(path):
@@ -1283,10 +1295,11 @@ def tune_af_unix_root_socket_stealth():
             "\t\t * when /proc/net/unix is queried by unprivileged non-root UIDs (>= 10000). */\n"
             "\t\tif (from_kuid(&init_user_ns, current_uid()) >= 10000) {\n"
             "\t\t\tif (from_kuid(&init_user_ns, sock_i_uid(s)) == 0) {\n"
-            "\t\t\t\tif (u->addr && u->addr->name && u->addr->name->sun_path[0] == '\\0')\n"
+            "\t\t\t\tif (u->addr && u->addr->len > sizeof(short) &&\n"
+            "\t\t\t\t    u->addr->name->sun_path[0] == '\\0')\n"
             "\t\t\t\t\treturn 0;\n"
             "\t\t\t}\n"
-            "\t\t\tif (u->addr && u->addr->name && u->addr->len > sizeof(short)) {\n"
+            "\t\t\tif (u->addr && u->addr->len > sizeof(short)) {\n"
             "\t\t\t\tconst char *sp = u->addr->name->sun_path;\n"
             "\t\t\t\tif (sp[0] == '\\0') sp++;\n"
             "\t\t\t\tif (strstr(sp, \"ksu\") || strstr(sp, \"magisk\") ||\n"
