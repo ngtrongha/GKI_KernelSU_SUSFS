@@ -28,7 +28,6 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - FastRPC PM QoS CPU wake-up latency tuning for Hexagon DSP on SM8650 (drivers/misc/fastrpc.c)
 - Transparent Hugepages (THP) Madvise Mode for ART heap optimization (arch/arm64/configs/gki_defconfig)
 - TCP Fast Open (TFO) client+server mode for faster connection establishment (net/ipv4/tcp.c, defconfig)
-- Battery health charge control limit via sysfs charge_control_end_threshold (drivers/power/supply/)
 """
 
 import os
@@ -1543,52 +1542,6 @@ def tune_tcp_fastopen():
     print("[-] Info: net/ipv4/tcp.c not found in candidate paths")
 
 
-def tune_charge_control_limit():
-    """Expose charge_control_end_threshold sysfs for battery health charge limiting.
-
-    Adds POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD to the writable
-    sysfs attributes in power_supply_sysfs.c so userspace can cap charging
-    at a configured percentage (e.g. 80%) for battery longevity.
-    """
-    psy_paths = [
-        os.path.join("drivers", "power", "supply", "power_supply_sysfs.c"),
-        os.path.join("common", "drivers", "power", "supply", "power_supply_sysfs.c"),
-    ]
-
-    for path in psy_paths:
-        if not os.path.isfile(path):
-            continue
-
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        marker = "houji charge_control_end_threshold"
-        if marker in content:
-            print(f"[*] Charge control limit already present in {path}")
-            return
-
-        # Look for the is_writable check to add charge control threshold
-        target = "if (power_supply_has_property(psy->desc, attrno)) {"
-        if target not in content:
-            print(f"[-] Info: power_supply_has_property check not found in {path}")
-            continue
-
-        code = (
-            "if (power_supply_has_property(psy->desc, attrno)) {\n"
-            "\t\t/* houji charge_control_end_threshold: expose as writable for battery\n"
-            "\t\t * health charging limits — userspace writes 0-100 to cap charge level */\n"
-            "\t\tif (attrno == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD)\n"
-            "\t\t\treturn S_IRUGO | S_IWUSR | S_IWGRP;"
-        )
-        content = content.replace(target, code, 1)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"[+] Tuned {path}: charge_control_end_threshold sysfs exposed as writable")
-        return
-
-    print("[-] Info: power_supply_sysfs.c not found in candidate paths")
-
-
 def tune_anykernel_branding():
     ak3_dirs = [
         "AnyKernel3",
@@ -1644,7 +1597,6 @@ ui_print " [*] Storage I/O  : UFS 4.0 MCQ & WB Flush Delay"
 ui_print " [*] Memory Mgmt  : ZSTD ZRAM & THP Madvise     "
 ui_print " [*] Network      : TCP Fast Open (client+server)"
 ui_print " [*] DSP Offload  : FastRPC PM QoS Latency Tuned"
-ui_print " [*] Battery      : Charge Control Limit Exposed "
 ui_print " [*] Root Stealth : KSU-Next + SUSFS + AF_UNIX  "
 ui_print "=================================================="
 ui_print " "
@@ -1749,7 +1701,6 @@ def main():
     tune_fastrpc_pm_qos()
     tune_thp_madvise_defconfig()
     tune_tcp_fastopen()
-    tune_charge_control_limit()
     tune_anykernel_branding()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
