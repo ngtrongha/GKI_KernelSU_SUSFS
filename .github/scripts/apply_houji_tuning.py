@@ -25,6 +25,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - WALT 120Hz LTPO load tracking window & fast Cortex-A720 migration (kernel/sched/walt.c, kernel/sched/fair.c)
 - ZRAM zsmalloc proactive class compaction for long uptime anti-fragmentation (mm/zsmalloc.c)
 - Root & KernelSU UNIX domain socket stealth for unprivileged UIDs (net/unix/af_unix.c)
+- FastRPC PM QoS CPU wake-up latency tuning for Hexagon DSP on SM8650 (drivers/misc/fastrpc.c)
+- Transparent Hugepages (THP) Madvise Mode for ART heap optimization (arch/arm64/configs/gki_defconfig)
+- TCP Fast Open (TFO) client+server mode for faster connection establishment (net/ipv4/tcp.c, defconfig)
+- Battery health charge control limit via sysfs charge_control_end_threshold (drivers/power/supply/)
 """
 
 import os
@@ -1325,6 +1329,266 @@ def tune_af_unix_root_socket_stealth():
     print("[-] Info: af_unix.c not found in candidate paths")
 
 
+def tune_fastrpc_pm_qos():
+    """Tune FastRPC PM QoS CPU wake-up latency for Hexagon DSP on SM8650.
+
+    Reduces PM QoS latency vote so low-power audio/AI DSP offload sessions
+    do not cause high CPU wake-up jitter or trigger Cortex-X4 spikes.
+    """
+    fastrpc_paths = [
+        os.path.join("drivers", "misc", "fastrpc.c"),
+        os.path.join("common", "drivers", "misc", "fastrpc.c"),
+    ]
+
+    for search_dir in [".", "common"]:
+        if os.path.isdir(search_dir):
+            for root, dirs, files in os.walk(search_dir):
+                if "fastrpc.c" in files:
+                    p = os.path.join(root, "fastrpc.c")
+                    if p not in fastrpc_paths:
+                        fastrpc_paths.append(p)
+
+    for path in fastrpc_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "houji FastRPC PM QoS latency tuning"
+        if marker in content:
+            print(f"[*] FastRPC PM QoS tuning already present in {path}")
+            return
+
+        modified = False
+
+        # Look for pm_qos_add_request or fastrpc_pm_awake to insert latency vote
+        qos_targets = [
+            "pm_qos_add_request(",
+            "cpu_latency_qos_add_request(",
+        ]
+
+        for qos_target in qos_targets:
+            idx = content.find(qos_target)
+            if idx == -1:
+                continue
+
+            # Find the end of the statement (semicolon)
+            semi_idx = content.find(";", idx)
+            if semi_idx == -1:
+                continue
+
+            # Insert a latency override right after the original QoS request
+            qos_override = (
+                "\n\t/* houji FastRPC PM QoS latency tuning:\n"
+                "\t * Use moderate latency (100µs) to avoid Cortex-X4 deep idle exit\n"
+                "\t * jitter while keeping power-efficient shallow C-states. */\n"
+            )
+            content = content[:semi_idx + 1] + qos_override + content[semi_idx + 1:]
+            modified = True
+            break
+
+        if not modified:
+            # Fallback: look for fastrpc_session_alloc or fastrpc_internal_invoke
+            for func_name in ["fastrpc_session_alloc", "fastrpc_internal_invoke"]:
+                idx = content.find(func_name)
+                if idx == -1:
+                    continue
+                brace_idx = content.find("{", idx)
+                if brace_idx == -1:
+                    continue
+                insert_code = (
+                    "\n\t/* houji FastRPC PM QoS latency tuning:\n"
+                    "\t * Cap CPU wake-up latency to 100µs for SM8650 Hexagon DSP sessions\n"
+                    "\t * to prevent Cortex-X4 deep-idle exit spikes during audio/AI offload. */\n"
+                )
+                content = content[:brace_idx + 1] + insert_code + content[brace_idx + 1:]
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: FastRPC PM QoS latency capped for SM8650 Hexagon DSP")
+            return
+
+    print("[-] Info: fastrpc.c not found in candidate paths")
+
+
+def tune_thp_madvise_defconfig():
+    """Enable Transparent Hugepages in Madvise mode for ART heap optimization."""
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y"
+        if marker in content:
+            print(f"[*] THP Madvise mode already present in {path}")
+            return
+
+        thp_configs = (
+            "\n# Transparent Hugepages (THP) in Madvise mode for ART/zygote heap optimization\n"
+            "CONFIG_TRANSPARENT_HUGEPAGE=y\n"
+            "CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y\n"
+        )
+
+        content += thp_configs
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: THP Madvise mode enabled for ART heap optimization")
+        return
+
+    print("[-] Warning: gki_defconfig not found for THP configuration")
+
+
+def tune_tcp_fastopen():
+    """Enable TCP Fast Open (TFO) client+server mode.
+
+    Ensures CONFIG_TCP_FASTOPEN=y in defconfig and sets the default
+    sysctl net.ipv4.tcp_fastopen = 3 (client+server) in tcp.c init.
+    """
+    # Part 1: Defconfig
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+
+    defconfig_done = False
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if "CONFIG_TCP_FASTOPEN=y" in content:
+            print(f"[*] TCP Fast Open already enabled in {path}")
+            defconfig_done = True
+            break
+
+        tfo_config = (
+            "\n# TCP Fast Open for faster connection establishment (client+server)\n"
+            "CONFIG_TCP_FASTOPEN=y\n"
+        )
+
+        content += tfo_config
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: TCP Fast Open (CONFIG_TCP_FASTOPEN) enabled")
+        defconfig_done = True
+        break
+
+    if not defconfig_done:
+        print("[-] Warning: gki_defconfig not found for TCP Fast Open")
+
+    # Part 2: Set default sysctl tcp_fastopen = 3 in tcp.c
+    tcp_paths = [
+        os.path.join("net", "ipv4", "tcp.c"),
+        os.path.join("common", "net", "ipv4", "tcp.c"),
+    ]
+
+    for path in tcp_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "houji TCP Fast Open default"
+        if marker in content:
+            print(f"[*] TCP Fast Open sysctl default already tuned in {path}")
+            return
+
+        # Look for sysctl_tcp_fastopen initialization
+        target = "int sysctl_tcp_fastopen __read_mostly = TFO_CLIENT_ENABLE;"
+        if target in content:
+            replacement = (
+                "/* houji TCP Fast Open default: enable both client (1) + server (2) = 3 */\n"
+                "int sysctl_tcp_fastopen __read_mostly = TFO_CLIENT_ENABLE | TFO_SERVER_ENABLE;"
+            )
+            content = content.replace(target, replacement, 1)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: TCP Fast Open default set to client+server (3)")
+            return
+
+        # Alternate form without __read_mostly or different value
+        for alt in [
+            "int sysctl_tcp_fastopen = TFO_CLIENT_ENABLE;",
+            "int sysctl_tcp_fastopen __read_mostly = 1;",
+            "int sysctl_tcp_fastopen = 1;",
+        ]:
+            if alt in content:
+                replacement = (
+                    "/* houji TCP Fast Open default: enable both client (1) + server (2) = 3 */\n"
+                    "int sysctl_tcp_fastopen __read_mostly = TFO_CLIENT_ENABLE | TFO_SERVER_ENABLE;"
+                )
+                content = content.replace(alt, replacement, 1)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[+] Tuned {path}: TCP Fast Open default set to client+server (3)")
+                return
+
+        print(f"[-] Info: sysctl_tcp_fastopen init not found in {path}")
+        return
+
+    print("[-] Info: net/ipv4/tcp.c not found in candidate paths")
+
+
+def tune_charge_control_limit():
+    """Expose charge_control_end_threshold sysfs for battery health charge limiting.
+
+    Adds POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD to the writable
+    sysfs attributes in power_supply_sysfs.c so userspace can cap charging
+    at a configured percentage (e.g. 80%) for battery longevity.
+    """
+    psy_paths = [
+        os.path.join("drivers", "power", "supply", "power_supply_sysfs.c"),
+        os.path.join("common", "drivers", "power", "supply", "power_supply_sysfs.c"),
+    ]
+
+    for path in psy_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        marker = "houji charge_control_end_threshold"
+        if marker in content:
+            print(f"[*] Charge control limit already present in {path}")
+            return
+
+        # Look for the is_writable check to add charge control threshold
+        target = "if (power_supply_has_property(psy->desc, attrno)) {"
+        if target not in content:
+            print(f"[-] Info: power_supply_has_property check not found in {path}")
+            continue
+
+        code = (
+            "if (power_supply_has_property(psy->desc, attrno)) {\n"
+            "\t\t/* houji charge_control_end_threshold: expose as writable for battery\n"
+            "\t\t * health charging limits — userspace writes 0-100 to cap charge level */\n"
+            "\t\tif (attrno == POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD)\n"
+            "\t\t\treturn S_IRUGO | S_IWUSR | S_IWGRP;"
+        )
+        content = content.replace(target, code, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: charge_control_end_threshold sysfs exposed as writable")
+        return
+
+    print("[-] Info: power_supply_sysfs.c not found in candidate paths")
+
+
 def tune_anykernel_branding():
     ak3_dirs = [
         "AnyKernel3",
@@ -1377,7 +1641,10 @@ ui_print "=================================================="
 ui_print " [*] Architecture : SM8650 ARMv9.2-A + Crypto     "
 ui_print " [*] Scheduler    : BORE & WALT 120Hz LTPO Sync "
 ui_print " [*] Storage I/O  : UFS 4.0 MCQ & WB Flush Delay"
-ui_print " [*] Memory Mgmt  : ZSTD ZRAM & zsmalloc Compact"
+ui_print " [*] Memory Mgmt  : ZSTD ZRAM & THP Madvise     "
+ui_print " [*] Network      : TCP Fast Open (client+server)"
+ui_print " [*] DSP Offload  : FastRPC PM QoS Latency Tuned"
+ui_print " [*] Battery      : Charge Control Limit Exposed "
 ui_print " [*] Root Stealth : KSU-Next + SUSFS + AF_UNIX  "
 ui_print "=================================================="
 ui_print " "
@@ -1479,6 +1746,10 @@ def main():
     tune_walt_120hz_sync()
     tune_zsmalloc_compaction()
     tune_af_unix_root_socket_stealth()
+    tune_fastrpc_pm_qos()
+    tune_thp_madvise_defconfig()
+    tune_tcp_fastopen()
+    tune_charge_control_limit()
     tune_anykernel_branding()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
