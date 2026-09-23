@@ -53,7 +53,7 @@ on:
           - latest
           - verified
           - update
-        default: verified
+        default: latest
       root_flavor:
         description: "Root Flavor"
         type: choice
@@ -203,8 +203,8 @@ jobs:
 
           # Audited pins (from root-variants.yml). Used only when commit_mode=verified.
           PIN_NOMOUNT="d0f57d5c37ff02aae2299daded57919153240cb3"
-          PIN_KERNELSU="3c1240625655978f319a98398031100b80e9da7c"
-          PIN_RESUKISU="3c1882886dbbb54f4aae7ddf205f8ccde32c2a34"
+          PIN_KERNELSU="449436dd56e4abb075f7b53fb5b2b33ff3830dd2"
+          PIN_RESUKISU="6803643e19e2e6e8287f96461aabb93bdd6c47fa"
           PIN_SUKISU_ULTRA="e2912817f4e1b194e582a06e0b5eacf6a3fb7083"
           declare -A PIN_SUSFS=(
             [susfs_commit_android12_5_10]="ec785f47d49f7b3871ca9356f450411020af7017"
