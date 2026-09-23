@@ -1675,9 +1675,21 @@ def tune_touch_irq_priority():
             print(f"[*] Touch IRQ priority elevation already present in {path}")
             return
 
+        # Ensure struct sched_param definition is complete by including <uapi/linux/sched/types.h>
+        if "#include <uapi/linux/sched/types.h>" not in content:
+            inc_idx = content.find("#include")
+            if inc_idx != -1:
+                content = content[:inc_idx] + "#include <uapi/linux/sched/types.h>\n" + content[inc_idx:]
+            else:
+                content = "#include <uapi/linux/sched/types.h>\n" + content
+
         modified = False
-        for func_name in ["input_handle_event", "input_event"]:
-            idx = content.find(func_name)
+        target_funcs = [
+            "void input_event(struct input_dev *dev, unsigned int type, unsigned int code, int value)",
+            "void input_handle_event(struct input_dev *dev,",
+        ]
+        for target_str in target_funcs:
+            idx = content.find(target_str)
             if idx == -1:
                 continue
             brace_idx = content.find("{", idx)
@@ -1687,7 +1699,7 @@ def tune_touch_irq_priority():
             rt_code = (
                 "\n\t/* Xiaomi 14 (houji): Touch IRQ RT Priority Elevation\n"
                 "\t * Elevate touch event worker kthread to real-time SCHED_FIFO (priority 98)\n"
-                "\t * to guarantee sub-15ms touch dispatch latency synchronized with 120Hz display. */\n"
+                "\t * before event spinlocks are acquired, ensuring sub-15ms touch dispatch latency. */\n"
                 "\tif (type == EV_ABS && in_task() && current->policy != SCHED_FIFO) {\n"
                 "\t\tstruct sched_param param = { .sched_priority = 98 };\n"
                 "\t\tsched_setscheduler_nocheck(current, SCHED_FIFO, &param);\n"
@@ -1719,17 +1731,20 @@ def tune_ksu_fbe_boot_sync():
         os.path.join("common", "drivers", "kernelsu", "kernel", "core_hook.c"),
         os.path.join("..", "KernelSU-Next", "kernel", "core_hook.c"),
         os.path.join("..", "KernelSU", "kernel", "core_hook.c"),
+        os.path.join("..", "ReSukiSU", "kernel", "core_hook.c"),
         os.path.join("KernelSU-Next", "kernel", "core_hook.c"),
         os.path.join("KernelSU", "kernel", "core_hook.c"),
+        os.path.join("ReSukiSU", "kernel", "core_hook.c"),
     ]
 
     for search_dir in [".", "common", "drivers", ".."]:
         if os.path.isdir(search_dir):
-            for root, dirs, files in os.walk(search_dir):
-                if "core_hook.c" in files:
-                    p = os.path.join(root, "core_hook.c")
-                    if p not in ksu_hook_paths:
-                        ksu_hook_paths.append(p)
+            for root, dirs, files in os.walk(search_dir, followlinks=True):
+                for target_file in ["core_hook.c", "boot_event.c"]:
+                    if target_file in files:
+                        p = os.path.join(root, target_file)
+                        if p not in ksu_hook_paths:
+                            ksu_hook_paths.append(p)
 
     for path in ksu_hook_paths:
         if not os.path.isfile(path):
@@ -1744,7 +1759,7 @@ def tune_ksu_fbe_boot_sync():
             return
 
         modified = False
-        for target in ["on_post_fs_data(", "ksu_handle_post_fs_data("]:
+        for target in ["on_post_fs_data(", "ksu_handle_post_fs_data(", "void on_post_fs_data"]:
             idx = content.find(target)
             if idx == -1:
                 continue
@@ -1771,7 +1786,7 @@ def tune_ksu_fbe_boot_sync():
             print(f"[+] Tuned {path}: KernelSU-Next FBE post-decryption boot sync applied (Issue #1483 fix)")
             return
 
-    print("[-] Info: core_hook.c not found in candidate paths (will be applied if present during build)")
+    print("[-] Info: core_hook.c / boot_event.c not found in candidate paths (will be applied if present during build)")
 
 
 def tune_anykernel_branding():
