@@ -1600,37 +1600,47 @@ def tune_eas_capacity_margin():
 
         modified = False
 
-        fits_targets = [
-            "static inline bool fits_capacity(unsigned long util, unsigned long max)\n{\n",
-            "static inline bool fits_capacity(unsigned long util, unsigned long max)\r\n{\r\n",
-            "static inline bool fits_capacity(unsigned long util, unsigned long max) {",
-        ]
-
-        eas_code = (
-            "\t/* Xiaomi 14 (houji): EAS Capacity Margin Calibration\n"
-            "\t * Calibrate up-migration capacity margin from 3.15GHz Cortex-A720 cluster\n"
-            "\t * (CPUs 2-6) to Cortex-X4 prime core (CPU 7) to ~35% (margin = 135%).\n"
-            "\t * Prevents premature task spillage onto Cortex-X4 during moderate\n"
-            "\t * multi-threaded rendering and UI frame dispatch. */\n"
-            "\tif (max > 0 && max < 1024) {\n"
-            "\t\t/* For Little/Mid cores (Cortex-A520/A720), use 35% margin to prevent premature Cortex-X4 wakeups */\n"
-            "\t\treturn (util * 100) <= (max * 135);\n"
-            "\t}\n"
+        # In GKI 6.1 kernel/sched/fair.c, fits_capacity is an expression macro:
+        # #define fits_capacity(cap, max) \
+        #     ((cap) * 1280 < (max) * 1024)
+        replacement = (
+            "/* Xiaomi 14 (houji): EAS Capacity Margin Calibration\n"
+            " * Tune up-migration capacity margin from 3.15GHz Cortex-A720 cluster (CPUs 2-6)\n"
+            " * to Cortex-X4 prime core (CPU 7) to ~35% (margin multiplier = 1080 vs 1382).\n"
+            " * Allows Cortex-A720 cores to absorb rendering and UI tasks without premature spillage to Cortex-X4. */\n"
+            "#define fits_capacity(cap, max) \\\n"
+            "\t(((max) < 1024) ? ((cap) * 1080 < (max) * 1024) : ((cap) * 1382 < (max) * 1024))"
         )
 
-        for target in fits_targets:
+        targets = [
+            "#define fits_capacity(cap, max) \\\n\t((cap) * 1280 < (max) * 1024)",
+            "#define fits_capacity(cap, max) \\\r\n\t((cap) * 1280 < (max) * 1024)",
+            "#define fits_capacity(cap, max) ((cap) * 1280 < (max) * 1024)",
+            "#define fits_capacity(cap, max) ((cap) * 1280 < (max) * 1024)\r",
+        ]
+
+        for target in targets:
             if target in content:
-                content = content.replace(target, target + eas_code, 1)
+                content = content.replace(target, replacement, 1)
                 modified = True
                 break
 
         if not modified:
-            idx = content.find("fits_capacity(")
+            define_str = "#define fits_capacity(cap, max)"
+            idx = content.find(define_str)
             if idx != -1:
-                brace_idx = content.find("{", idx)
-                if brace_idx != -1:
-                    insert_pos = brace_idx + 1
-                    content = content[:insert_pos] + "\n" + eas_code + content[insert_pos:]
+                next_newline = content.find("\n", idx)
+                if next_newline != -1:
+                    line = content[idx:next_newline]
+                    if line.rstrip().endswith("\\"):
+                        next_next_newline = content.find("\n", next_newline + 1)
+                        if next_next_newline != -1:
+                            target_span = content[idx:next_next_newline]
+                        else:
+                            target_span = content[idx:]
+                    else:
+                        target_span = line
+                    content = content.replace(target_span, replacement, 1)
                     modified = True
 
         if modified:
@@ -1665,25 +1675,33 @@ def tune_touch_irq_priority():
             print(f"[*] Touch IRQ priority elevation already present in {path}")
             return
 
-        target = "static void input_handle_event(struct input_dev *dev,"
-        if target in content:
-            idx = content.find(target)
+        modified = False
+        for func_name in ["input_handle_event", "input_event"]:
+            idx = content.find(func_name)
+            if idx == -1:
+                continue
             brace_idx = content.find("{", idx)
-            if brace_idx != -1:
-                rt_code = (
-                    "\n\t/* Xiaomi 14 (houji): Touch IRQ RT Priority Elevation\n"
-                    "\t * Elevate touch event worker kthread to real-time SCHED_FIFO (priority 98)\n"
-                    "\t * to guarantee sub-15ms touch dispatch latency synchronized with 120Hz display. */\n"
-                    "\tif (type == EV_ABS && in_task() && current->policy != SCHED_FIFO) {\n"
-                    "\t\tstruct sched_param param = { .sched_priority = 98 };\n"
-                    "\t\tsched_setscheduler_nocheck(current, SCHED_FIFO, &param);\n"
-                    "\t}\n"
-                )
-                content = content[:brace_idx + 1] + rt_code + content[brace_idx + 1:]
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"[+] Tuned {path}: Touch IRQ threaded dispatcher elevated to SCHED_FIFO RT priority")
-                return
+            if brace_idx == -1:
+                continue
+
+            rt_code = (
+                "\n\t/* Xiaomi 14 (houji): Touch IRQ RT Priority Elevation\n"
+                "\t * Elevate touch event worker kthread to real-time SCHED_FIFO (priority 98)\n"
+                "\t * to guarantee sub-15ms touch dispatch latency synchronized with 120Hz display. */\n"
+                "\tif (type == EV_ABS && in_task() && current->policy != SCHED_FIFO) {\n"
+                "\t\tstruct sched_param param = { .sched_priority = 98 };\n"
+                "\t\tsched_setscheduler_nocheck(current, SCHED_FIFO, &param);\n"
+                "\t}\n"
+            )
+            content = content[:brace_idx + 1] + rt_code + content[brace_idx + 1:]
+            modified = True
+            break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: Touch IRQ threaded dispatcher elevated to SCHED_FIFO RT priority")
+            return
 
     print("[-] Info: input.c not found in candidate paths")
 
@@ -1695,13 +1713,17 @@ def tune_ksu_fbe_boot_sync():
     storage decryption is complete (post-fs-data / zygote-start) before module daemons launch.
     """
     ksu_hook_paths = [
+        os.path.join("drivers", "kernelsu", "core_hook.c"),
         os.path.join("drivers", "kernelsu", "kernel", "core_hook.c"),
+        os.path.join("common", "drivers", "kernelsu", "core_hook.c"),
         os.path.join("common", "drivers", "kernelsu", "kernel", "core_hook.c"),
+        os.path.join("..", "KernelSU-Next", "kernel", "core_hook.c"),
+        os.path.join("..", "KernelSU", "kernel", "core_hook.c"),
         os.path.join("KernelSU-Next", "kernel", "core_hook.c"),
         os.path.join("KernelSU", "kernel", "core_hook.c"),
     ]
 
-    for search_dir in [".", "common", "KernelSU-Next", "KernelSU"]:
+    for search_dir in [".", "common", "drivers", ".."]:
         if os.path.isdir(search_dir):
             for root, dirs, files in os.walk(search_dir):
                 if "core_hook.c" in files:
@@ -1722,22 +1744,26 @@ def tune_ksu_fbe_boot_sync():
             return
 
         modified = False
-        target = "int ksu_handle_post_fs_data(void)"
-        if target in content:
+        for target in ["on_post_fs_data(", "ksu_handle_post_fs_data("]:
             idx = content.find(target)
+            if idx == -1:
+                continue
             brace_idx = content.find("{", idx)
-            if brace_idx != -1:
-                sync_code = (
-                    "\n\t/* Xiaomi 14 (houji): FBE Post-Decryption Boot Sync (Issue #1483)\n"
-                    "\t * Ensure module daemon execution is safely synchronized post-decryption.\n"
-                    "\t * Prevents module startup hangs on encrypted FBE storage before credential unlock. */\n"
-                    "\tstatic bool fbe_post_fs_data_done = false;\n"
-                    "\tif (fbe_post_fs_data_done)\n"
-                    "\t\treturn 0;\n"
-                    "\tfbe_post_fs_data_done = true;\n"
-                )
-                content = content[:brace_idx + 1] + sync_code + content[brace_idx + 1:]
-                modified = True
+            if brace_idx == -1:
+                continue
+
+            sync_code = (
+                "\n\t/* Xiaomi 14 (houji): FBE Post-Decryption Boot Sync (Issue #1483)\n"
+                "\t * Ensure module daemon execution is safely synchronized post-decryption.\n"
+                "\t * Prevents module startup hangs on encrypted FBE storage before credential unlock. */\n"
+                "\tstatic bool fbe_post_fs_data_done = false;\n"
+                "\tif (fbe_post_fs_data_done)\n"
+                "\t\treturn;\n"
+                "\tfbe_post_fs_data_done = true;\n"
+            )
+            content = content[:brace_idx + 1] + sync_code + content[brace_idx + 1:]
+            modified = True
+            break
 
         if modified:
             with open(path, "w", encoding="utf-8") as f:
