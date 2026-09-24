@@ -34,7 +34,7 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - KernelSU-Next FBE post-decryption boot synchronization (drivers/kernelsu/kernel/core_hook.c)
 - Adreno 750 KGSL preemption granularity & 10ms SurfaceFlinger deadline (drivers/gpu/msm/adreno.c, kgsl_ringbuffer.c)
 - Binder IPC asynchronous buffer expansion to 768KB & oneway spam detection (drivers/android/binder.c, binder_alloc.c)
-- Wi-Fi 7 WCN7850 Target Wake Time (TWT) negotiation & power saving (net/wireless/, gki_defconfig)
+- Wi-Fi 7 WCN7850 Target Wake Time (TWT) negotiation & burst aggregation (net/wireless/, wcn7850.fragment, netdev backlog)
 """
 
 import os
@@ -2159,8 +2159,13 @@ def tune_wifi7_twt_power_saving():
     - In net/wireless/core.c: Enable TWT negotiation capability flag
       (NL80211_EXT_FEATURE_PROTECTED_TWT / supported TWT flags) on wiphy registration
       for WCN7850 (FastConnect 7800) to allow burst packet aggregation.
-    - In arch/arm64/configs/gki_defconfig: Ensure CONFIG_CFG80211_DEFAULT_PS=y and
-      CONFIG_MAC80211_DEFAULT_PS=y for lower active Wi-Fi standby power.
+    - In target WCN7850 config fragment: Provide CONFIG_WLAN_TWT, CONFIG_WLAN_BURST_AGGREGATION,
+      CONFIG_QCACLD_WLAN_LFR3 for SM8650 FastConnect 7800.
+    - In net/core/dev.c & net/ipv4/tcp_input.c: Expand netdev_max_backlog to 10000 and disable
+      tcp_slow_start_after_idle so Wi-Fi 7 burst aggregation achieves full throughput upon waking
+      from TWT sleep without stalling or dropping frames.
+    - In gki_defconfig: Ensure no in-tree CFG80211/MAC80211 is appended as GKI leaves Wi-Fi to
+      vendor DLKM (WCN7850), avoiding unmanaged .ko modules in Bazel Kleaf builds.
     """
     marker = "SM8650 WCN7850 Wi-Fi 7 TWT Power Saving"
 
@@ -2227,34 +2232,96 @@ def tune_wifi7_twt_power_saving():
                 f.write(content)
             print(f"[+] Tuned {path}: Wi-Fi 7 TWT negotiation flags ({', '.join(twt_flags)}) enabled")
 
-    # Part 2: defconfig for Wi-Fi power saving
+    # Part 2: Target WCN7850 Wi-Fi 7 TWT config fragment
+    fragment_candidates = [
+        os.path.join("arch", "arm64", "configs", "wcn7850_twt.fragment"),
+        os.path.join("common", "arch", "arm64", "configs", "wcn7850_twt.fragment"),
+    ]
+    fragment_content = (
+        f"# {marker}: FastConnect 7800 (WCN7850) Wi-Fi 7 TWT & Burst Aggregation\n"
+        "CONFIG_WLAN_TWT=y\n"
+        "CONFIG_WLAN_TWT_SAP=y\n"
+        "CONFIG_WLAN_POWERSAVE=y\n"
+        "CONFIG_WLAN_FEATURE_11BE=y\n"
+        "CONFIG_WLAN_FEATURE_11BE_MLO=y\n"
+        "CONFIG_WLAN_BURST_AGGREGATION=y\n"
+        "CONFIG_QCACLD_WLAN_LFR3=y\n"
+        "CONFIG_WLAN_FASTPATH=y\n"
+        "CONFIG_WLAN_NAPI=y\n"
+    )
+    for frag_path in fragment_candidates:
+        frag_dir = os.path.dirname(frag_path)
+        if os.path.isdir(frag_dir):
+            with open(frag_path, "w", encoding="utf-8") as f:
+                f.write(fragment_content)
+            print(f"[+] Generated target WCN7850 config fragment: {frag_path}")
+
+    # Part 3: Tune netdev_max_backlog for Wi-Fi 7 320MHz burst packet aggregation
+    dev_candidates = [
+        os.path.join("net", "core", "dev.c"),
+        os.path.join("common", "net", "core", "dev.c"),
+    ]
+    for dev_path in dev_candidates:
+        if not os.path.isfile(dev_path):
+            continue
+        with open(dev_path, "r", encoding="utf-8", errors="ignore") as f:
+            dev_content = f.read()
+        burst_marker = "Wi-Fi 7 burst aggregation backlog"
+        if burst_marker in dev_content:
+            continue
+        backlog_target = "int netdev_max_backlog __read_mostly = 1000;"
+        if backlog_target in dev_content:
+            dev_replacement = (
+                f"/* {marker}: expand backlog buffer to 10000 for {burst_marker} */\n"
+                "int netdev_max_backlog __read_mostly = 10000;"
+            )
+            dev_content = dev_content.replace(backlog_target, dev_replacement, 1)
+            with open(dev_path, "w", encoding="utf-8") as f:
+                f.write(dev_content)
+            print(f"[+] Tuned {dev_path}: netdev_max_backlog expanded to 10000 for Wi-Fi 7 burst aggregation")
+
+    # Part 4: Tune tcp_slow_start_after_idle in TCP stack for TWT power saving
+    tcp_candidates = [
+        os.path.join("net", "ipv4", "tcp_input.c"),
+        os.path.join("common", "net", "ipv4", "tcp_input.c"),
+    ]
+    for tcp_path in tcp_candidates:
+        if not os.path.isfile(tcp_path):
+            continue
+        with open(tcp_path, "r", encoding="utf-8", errors="ignore") as f:
+            tcp_content = f.read()
+        twt_tcp_marker = "TWT sleep CWND preservation"
+        if twt_tcp_marker in tcp_content:
+            continue
+        tcp_target = "int sysctl_tcp_slow_start_after_idle __read_mostly = 1;"
+        if tcp_target in tcp_content:
+            tcp_replacement = (
+                f"/* {marker}: disable slow start after idle for {twt_tcp_marker} */\n"
+                "int sysctl_tcp_slow_start_after_idle __read_mostly = 0;"
+            )
+            tcp_content = tcp_content.replace(tcp_target, tcp_replacement, 1)
+            with open(tcp_path, "w", encoding="utf-8") as f:
+                f.write(tcp_content)
+            print(f"[+] Tuned {tcp_path}: tcp_slow_start_after_idle disabled to preserve CWND after TWT sleep")
+
+    # Part 5: Cleanse gki_defconfig of any legacy CFG80211/MAC80211 module triggers
     defconfig_paths = [
         os.path.join("arch", "arm64", "configs", "gki_defconfig"),
         os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
     ]
-
     for path in defconfig_paths:
         if not os.path.isfile(path):
             continue
-
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        if marker in content:
-            print(f"[*] Wi-Fi 7 TWT defconfig already present in {path}")
-            continue
-
-        twt_configs = (
-            f"\n# {marker}: lower active Wi-Fi standby power & burst aggregation\n"
-            "CONFIG_CFG80211=y\n"
-            "CONFIG_CFG80211_DEFAULT_PS=y\n"
-            "CONFIG_MAC80211=y\n"
-            "CONFIG_MAC80211_DEFAULT_PS=y\n"
-        )
-        content += twt_configs
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"[+] Tuned {path}: Wi-Fi 7 TWT power saving options added to defconfig")
+            lines = f.readlines()
+        clean_lines = [
+            l for l in lines
+            if not any(k in l for k in ["CONFIG_CFG80211", "CONFIG_MAC80211"])
+        ]
+        if len(clean_lines) != len(lines):
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(clean_lines)
+            print(f"[+] Cleansed {path}: removed CFG80211/MAC80211 to prevent unmanaged .ko build errors in Kleaf")
 
 
 def main():
