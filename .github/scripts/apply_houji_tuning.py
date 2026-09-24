@@ -2156,12 +2156,35 @@ def tune_binder_ipc_buffer():
 def tune_wifi7_twt_power_saving():
     """Enable Wi-Fi 7 Target Wake Time (TWT) negotiation flags and power saving.
 
-    - In net/wireless/core.c (or nl80211.c): Enable TWT requester & responder negotiation
-      capability flags for WCN7850 (FastConnect 7800) to allow burst packet aggregation.
+    - In net/wireless/core.c: Enable TWT negotiation capability flag
+      (NL80211_EXT_FEATURE_PROTECTED_TWT / supported TWT flags) on wiphy registration
+      for WCN7850 (FastConnect 7800) to allow burst packet aggregation.
     - In arch/arm64/configs/gki_defconfig: Ensure CONFIG_CFG80211_DEFAULT_PS=y and
       CONFIG_MAC80211_DEFAULT_PS=y for lower active Wi-Fi standby power.
     """
     marker = "SM8650 WCN7850 Wi-Fi 7 TWT Power Saving"
+
+    # Inspect nl80211.h to verify available TWT extended feature flags
+    nl80211_candidates = [
+        os.path.join("include", "uapi", "linux", "nl80211.h"),
+        os.path.join("common", "include", "uapi", "linux", "nl80211.h"),
+    ]
+    twt_flags = []
+    for h_path in nl80211_candidates:
+        if os.path.isfile(h_path):
+            with open(h_path, "r", encoding="utf-8", errors="ignore") as f:
+                h_content = f.read()
+            if "NL80211_EXT_FEATURE_PROTECTED_TWT" in h_content:
+                twt_flags.append("NL80211_EXT_FEATURE_PROTECTED_TWT")
+            if "NL80211_EXT_FEATURE_TWT_REQUESTER" in h_content:
+                twt_flags.append("NL80211_EXT_FEATURE_TWT_REQUESTER")
+            if "NL80211_EXT_FEATURE_TWT_RESPONDER" in h_content:
+                twt_flags.append("NL80211_EXT_FEATURE_TWT_RESPONDER")
+            break
+
+    # Default to NL80211_EXT_FEATURE_PROTECTED_TWT if nl80211.h not scanned directly
+    if not twt_flags:
+        twt_flags.append("NL80211_EXT_FEATURE_PROTECTED_TWT")
 
     # Part 1: net/wireless/core.c
     wireless_candidates = [
@@ -2186,13 +2209,14 @@ def tune_wifi7_twt_power_saving():
             "int wiphy_register(struct wiphy *wiphy)\r\n{",
         ]
 
+        flags_code = "".join(f"\twiphy_ext_feature_set(wiphy, {flag});\n" for flag in twt_flags)
+
         for rt in reg_targets:
             if rt in content:
                 hook = (
                     rt
                     + f"\n\t/* {marker}: enable TWT negotiation flags for burst packet aggregation */\n"
-                    "\twiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_TWT_REQUESTER);\n"
-                    "\twiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_TWT_RESPONDER);\n"
+                    + flags_code
                 )
                 content = content.replace(rt, hook, 1)
                 modified = True
@@ -2201,7 +2225,7 @@ def tune_wifi7_twt_power_saving():
         if modified:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            print(f"[+] Tuned {path}: Wi-Fi 7 TWT requester & responder negotiation flags enabled")
+            print(f"[+] Tuned {path}: Wi-Fi 7 TWT negotiation flags ({', '.join(twt_flags)}) enabled")
 
     # Part 2: defconfig for Wi-Fi power saving
     defconfig_paths = [
