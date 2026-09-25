@@ -2578,18 +2578,21 @@ def tune_thinlto_cache():
         with open(makefile_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
-        if "--thinlto-cache-dir" in content:
+        if "LDFLAGS_vmlinux += --thinlto-cache-dir" in content:
             print(f"[*] ThinLTO cache directory already present in {makefile_path}")
             continue
 
+        # In Kbuild, ld.lld is invoked directly for vmlinux and vdso.
+        # Passing -Wl, to ld.lld causes 'unknown argument' errors in vdso linking.
+        # Attaching --thinlto-cache-dir directly to LDFLAGS_vmlinux targets only vmlinux linking cleanly.
         lto_code = (
             f"\n# {marker}\n"
-            "KBUILD_LDFLAGS += -Wl,--thinlto-cache-dir=/tmp/thinlto-cache\n"
+            "LDFLAGS_vmlinux += --thinlto-cache-dir=/tmp/thinlto-cache\n"
         )
         content += lto_code
         with open(makefile_path, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"[+] Tuned {makefile_path}: -Wl,--thinlto-cache-dir=/tmp/thinlto-cache added to KBUILD_LDFLAGS")
+        print(f"[+] Tuned {makefile_path}: --thinlto-cache-dir=/tmp/thinlto-cache added to LDFLAGS_vmlinux")
 
 
 def main():
