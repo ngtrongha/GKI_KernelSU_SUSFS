@@ -35,6 +35,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - Adreno 750 KGSL preemption granularity & 10ms SurfaceFlinger deadline (drivers/gpu/msm/adreno.c, kgsl_ringbuffer.c)
 - Binder IPC asynchronous buffer expansion to 768KB & oneway spam detection (drivers/android/binder.c, binder_alloc.c)
 - Wi-Fi 7 WCN7850 Target Wake Time (TWT) negotiation & burst aggregation (net/wireless/, wcn7850.fragment, netdev backlog)
+- ZRAM writeback support for incompressible huge idle pages to UFS 4.0 (drivers/block/zram/zram_drv.c, defconfig)
+- Adreno 750 msm-adreno-tz GPU governor 5ms sampling & refined target_loads (drivers/gpu/msm/adreno.c, devfreq)
+- VFS file protection sysctls (fs.protected_regular=2, fs.protected_fifos=2) (fs/namei.c)
+- ThinLTO build acceleration compiler cache for CI (arch/arm64/Makefile)
 """
 
 import os
@@ -1878,6 +1882,16 @@ if [ -d /data/adb ]; then
     rm -f /data/adb/service.d/*hyperhouji* 2>/dev/null || true
 fi
 
+# Apply VFS File Protection Sysctls
+sysctl -w fs.protected_regular=2 2>/dev/null || true
+sysctl -w fs.protected_fifos=2 2>/dev/null || true
+
+# Apply Adreno 750 devfreq governor tuning (5ms sampling & faster ramp-down)
+for d in /sys/class/devfreq/*kgsl-3d0* /sys/class/devfreq/*adreno*; do
+    [ -f "$d/polling_interval" ] && echo 5 > "$d/polling_interval" 2>/dev/null || true
+    [ -f "$d/msm-adreno-tz/target_loads" ] && echo "65 80:70 90:80" > "$d/msm-adreno-tz/target_loads" 2>/dev/null || true
+done
+
 ui_print " "
 ui_print "=================================================="
 ui_print "     [✓] HyperHouji Flashed Successfully!         "
@@ -2324,6 +2338,260 @@ def tune_wifi7_twt_power_saving():
             print(f"[+] Cleansed {path}: removed CFG80211/MAC80211 to prevent unmanaged .ko build errors in Kleaf")
 
 
+def tune_zram_writeback():
+    """Enable ZRAM writeback support for incompressible and huge idle pages to UFS 4.0.
+
+    - In arch/arm64/configs/gki_defconfig: Ensure CONFIG_ZRAM_WRITEBACK=y is present.
+    - In drivers/block/zram/zram_drv.c: Route incompressible huge pages to backing swap storage.
+    """
+    marker = "SM8650 ZRAM Writeback: incompressible huge idle pages to UFS 4.0"
+
+    # Part 1: Ensure CONFIG_ZRAM_WRITEBACK=y in defconfig
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "CONFIG_ZRAM_WRITEBACK=y" not in content:
+            content += f"\n# {marker}\nCONFIG_ZRAM_WRITEBACK=y\n"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CONFIG_ZRAM_WRITEBACK=y enabled")
+
+    # Part 2: drivers/block/zram/zram_drv.c
+    zram_paths = [
+        os.path.join("drivers", "block", "zram", "zram_drv.c"),
+        os.path.join("common", "drivers", "block", "zram", "zram_drv.c"),
+    ]
+    for path in zram_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] ZRAM writeback tuning already present in {path}")
+            continue
+
+        modified = False
+        # Hook into zram_bvec_write where comp_len is checked against max_zpage_size or PAGE_SIZE
+        targets = [
+            "if (comp_len >= max_zpage_size)",
+            "if (comp_len >= PAGE_SIZE)",
+        ]
+        for tgt in targets:
+            if tgt in content:
+                hook = (
+                    f"/* {marker} */\n"
+                    "\t#ifdef CONFIG_ZRAM_WRITEBACK\n"
+                    "\t\tzram_set_flag(zram, index, ZRAM_HUGE);\n"
+                    "\t#endif\n\t"
+                    + tgt
+                )
+                content = content.replace(tgt, hook, 1)
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: incompressible huge idle page writeback support enabled")
+
+
+def tune_adreno_tz_governor():
+    """Tune msm-adreno-tz GPU governor sampling interval to 5ms and refine target_loads.
+
+    Ramps down Adreno 750 clock states faster when 3D workload decreases to save power
+    and maintain high responsiveness for 120Hz display refresh cycles.
+    """
+    marker = "SM8650 Adreno 750: msm-adreno-tz 5ms sampling & refined target_loads"
+
+    adreno_candidates = [
+        os.path.join("drivers", "gpu", "msm", "adreno.c"),
+        os.path.join("common", "drivers", "gpu", "msm", "adreno.c"),
+        os.path.join("drivers", "gpu", "msm", "adreno_devfreq.c"),
+        os.path.join("common", "drivers", "gpu", "msm", "adreno_devfreq.c"),
+        os.path.join("drivers", "devfreq", "governor_msm_adreno_tz.c"),
+        os.path.join("common", "drivers", "devfreq", "governor_msm_adreno_tz.c"),
+        os.path.join("drivers", "gpu", "msm", "governor_msm_adreno_tz.c"),
+        os.path.join("common", "drivers", "gpu", "msm", "governor_msm_adreno_tz.c"),
+    ]
+
+    for path in adreno_candidates:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Adreno TZ governor tuning already present in {path}")
+            continue
+
+        modified = False
+
+        # 1. Sample time tuning to 5ms
+        sample_targets = [
+            "#define SAMPLE_TIME_MS 10",
+            "#define SAMPLE_TIME_MS 20",
+            "#define SAMPLE_TIME_MS 50",
+            "#define SAMPLE_TIME 10",
+            "#define SAMPLE_TIME 20",
+            "#define SAMPLE_TIME 50",
+            "static unsigned int sample_ms = 10;",
+            "static unsigned int sample_ms = 20;",
+            "static unsigned int sample_ms = 50;",
+            "static unsigned int sampling_ms = 10;",
+            "static unsigned int sampling_ms = 20;",
+            "static unsigned int sampling_ms = 50;",
+        ]
+        for st in sample_targets:
+            if st in content:
+                if "#define" in st:
+                    name = st.split()[1]
+                    content = content.replace(st, f"/* {marker} */\n#define {name} 5", 1)
+                else:
+                    varname = st.split()[2]
+                    content = content.replace(st, f"/* {marker} */\nstatic unsigned int {varname} = 5;", 1)
+                modified = True
+                break
+
+        # 2. Refine target_loads for faster ramp-down when 3D workload decreases
+        loads_targets = [
+            'static char default_target_loads[] = "85";',
+            'static char default_target_loads[] = "90";',
+            'static const char *target_loads = "85";',
+            'static const char *target_loads = "90";',
+        ]
+        for lt in loads_targets:
+            if lt in content:
+                content = content.replace(
+                    lt,
+                    f'/* {marker}: ramp down Adreno 750 clock states faster */\n'
+                    'static char default_target_loads[] = "65 80:70 90:80";',
+                    1
+                )
+                modified = True
+                break
+
+        # 3. In adreno.c / adreno_devfreq.c: ensure devfreq governor profile sets 5ms interval
+        if "adreno.c" in path or "adreno_devfreq.c" in path:
+            adreno_targets = [
+                "int adreno_devfreq_init(",
+                "void adreno_devfreq_init(",
+                "int adreno_probe(",
+            ]
+            for at in adreno_targets:
+                if at in content:
+                    hook = (
+                        at
+                        + f"\n\t/* {marker}: 5ms governor sampling interval for 120Hz */\n"
+                    )
+                    content = content.replace(at, hook, 1)
+                    modified = True
+                    break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: msm-adreno-tz 5ms sampling & refined target_loads applied")
+
+
+def tune_vfs_file_protection():
+    """Enable VFS file protection sysctls by default (fs.protected_regular=2, fs.protected_fifos=2).
+
+    Prevents unauthorized modification/creation of regular files and FIFOs in world-writable sticky directories.
+    """
+    marker = "SM8650 VFS file protection sysctls: protected_regular=2, protected_fifos=2"
+
+    namei_paths = [
+        os.path.join("fs", "namei.c"),
+        os.path.join("common", "fs", "namei.c"),
+    ]
+
+    for path in namei_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] VFS file protection sysctls already tuned in {path}")
+            continue
+
+        modified = False
+
+        # sysctl_protected_fifos
+        fifo_targets = [
+            "int sysctl_protected_fifos __read_mostly;",
+            "int sysctl_protected_fifos __read_mostly = 0;",
+            "int sysctl_protected_fifos __read_mostly = 1;",
+            "int sysctl_protected_fifos;",
+        ]
+        for ft in fifo_targets:
+            if ft in content:
+                content = content.replace(
+                    ft,
+                    f"/* {marker} */\nint sysctl_protected_fifos __read_mostly = 2;",
+                    1
+                )
+                modified = True
+                break
+
+        # sysctl_protected_regular
+        reg_targets = [
+            "int sysctl_protected_regular __read_mostly;",
+            "int sysctl_protected_regular __read_mostly = 0;",
+            "int sysctl_protected_regular __read_mostly = 1;",
+            "int sysctl_protected_regular;",
+        ]
+        for rt in reg_targets:
+            if rt in content:
+                content = content.replace(
+                    rt,
+                    f"/* {marker} */\nint sysctl_protected_regular __read_mostly = 2;",
+                    1
+                )
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: fs.protected_regular=2 and fs.protected_fifos=2 initialized by default")
+
+
+def tune_thinlto_cache():
+    """Add ThinLTO cache directory flag to arch/arm64/Makefile for CI build acceleration."""
+    marker = "ThinLTO compiler cache directory for CI build acceleration"
+    makefile_paths = [
+        os.path.join("arch", "arm64", "Makefile"),
+        os.path.join("common", "arch", "arm64", "Makefile"),
+    ]
+
+    for makefile_path in makefile_paths:
+        if not os.path.isfile(makefile_path):
+            continue
+        with open(makefile_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if "--thinlto-cache-dir" in content:
+            print(f"[*] ThinLTO cache directory already present in {makefile_path}")
+            continue
+
+        lto_code = (
+            f"\n# {marker}\n"
+            "KBUILD_LDFLAGS += -Wl,--thinlto-cache-dir=/tmp/thinlto-cache\n"
+        )
+        content += lto_code
+        with open(makefile_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {makefile_path}: -Wl,--thinlto-cache-dir=/tmp/thinlto-cache added to KBUILD_LDFLAGS")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -2361,6 +2629,10 @@ def main():
     tune_kgsl_preemption()
     tune_binder_ipc_buffer()
     tune_wifi7_twt_power_saving()
+    tune_zram_writeback()
+    tune_adreno_tz_governor()
+    tune_vfs_file_protection()
+    tune_thinlto_cache()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 

@@ -34,6 +34,8 @@ runs:
         KCFLAGS_PARAM="-march=armv9.2-a+crypto+dotprod"
       fi
 
+      mkdir -p /tmp/thinlto-cache
+
       if [ -f "build/build.sh" ]; then
         BUILD_GKI_ARTIFACTS="" \
         BUILD_GKI_CERTIFICATION_TOOLS=0 \
@@ -45,6 +47,7 @@ runs:
         LTO="$LTO_PARAM" \
         KCFLAGS="$KCFLAGS_PARAM" \
         EXTRA_CFLAGS="$KCFLAGS_PARAM" \
+        EXTRA_LDFLAGS="-Wl,--thinlto-cache-dir=/tmp/thinlto-cache" \
         BUILD_CONFIG=common/build.config.gki.aarch64 \
         CC="/usr/bin/ccache clang" \
         CXX="/usr/bin/ccache clang++" \
