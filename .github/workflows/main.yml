@@ -1395,7 +1395,11 @@ jobs:
     - name: Download NoMount metamodule
       uses: actions/download-artifact@v7
       with:
-        path: release-assets
+        # Pin an explicit subdirectory: a pattern matching exactly one
+        # artifact extracts flat into path (no per-artifact folder), which
+        # previously left NoMount files loose in release-assets/ and broke
+        # the Zip NoMount Metamodule loop that expects a directory.
+        path: release-assets/NoMount-Metamodule
         pattern: '*NoMount-Metamodule'
         merge-multiple: false
         if-no-files-found: ignore
