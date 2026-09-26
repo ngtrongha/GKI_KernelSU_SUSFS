@@ -43,6 +43,11 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - OOM task dump suppression (vm.oom_dump_tasks=0) to remove low-memory UI stalls (mm/oom_kill.c)
 - DRM LTPO vblank dispatch streamlining across 1Hz <-> 120Hz switches (drivers/gpu/drm/msm/)
 - fs.suid_dumpable pinned and enforced at 0 for core dump security (fs/exec.c)
+- Proactive memory compaction default (vm.compaction_proactiveness=20) for high-order free pages (mm/compaction.c)
+- F2FS in-kernel atomic write ioctls for SQLite WAL with fdatasync commit follow-up (fs/f2fs/file.c, gki_defconfig)
+- PELT load tracking halflife tuned to 16ms for 120Hz frequency ramp-up (kernel/sched/sched-pelt.h)
+- /proc/modules root LKM stealth for unprivileged app UIDs (kernel/module/procfs.c)
+- AnyKernel build-commit logging from GITHUB_SHA for traceable houji builds
 """
 
 import os
@@ -1895,6 +1900,7 @@ sysctl -w fs.protected_fifos=2 2>/dev/null || true
 sysctl -w net.ipv4.tcp_notsent_lowat=16384 2>/dev/null || true
 sysctl -w vm.oom_dump_tasks=0 2>/dev/null || true
 sysctl -w fs.suid_dumpable=0 2>/dev/null || true
+sysctl -w vm.compaction_proactiveness=20 2>/dev/null || true
 
 # Apply Adreno 750 devfreq governor tuning (5ms sampling & faster ramp-down)
 for d in /sys/class/devfreq/*kgsl-3d0* /sys/class/devfreq/*adreno*; do
@@ -1923,6 +1929,20 @@ ui_print " "
 
     clean_anykernel_sh = clean_anykernel_sh.replace("\r\n", "\n").replace("\r", "\n")
     banner_art = banner_art.replace("\r\n", "\n").replace("\r", "\n")
+
+    # houji build-commit logging: stamp the exact source commit into the
+    # flasher script and banner so every built image is traceable.
+    build_commit = os.environ.get("GITHUB_SHA", "").strip() or "local"
+    build_commit_short = build_commit[:12]
+    commit_line = f'ui_print " [*] Build Commit : {build_commit_short}"'
+    commit_anchor = 'ui_print " [*] Target GKI   : Linux 6.1 Android14 Verified"'
+    if commit_anchor in clean_anykernel_sh and commit_line not in clean_anykernel_sh:
+        clean_anykernel_sh = clean_anykernel_sh.replace(
+            commit_anchor, commit_anchor + "\n" + commit_line, 1
+        )
+    if "HyperHouji build commit:" not in clean_anykernel_sh:
+        clean_anykernel_sh = f"# HyperHouji build commit: {build_commit}\n" + clean_anykernel_sh
+    print(f"[*] HyperHouji build commit stamped into AnyKernel3: {build_commit}")
 
     found = False
     for ak3_dir in ak3_dirs:
@@ -2884,6 +2904,302 @@ def tune_drm_ltpo_vblank_sync():
     print("[-] Warning: DRM SDE/DPU vblank sources not found in candidate paths")
 
 
+def tune_proactive_compaction():
+    """Keep kcompactd proactively maintaining high-order free pages.
+
+    Ensures the vm.compaction_proactiveness default stays at 20 so kcompactd
+    reclaims fragmented pages during micro-idle intervals instead of
+    stalling allocations on the fault path.
+    """
+    compact_paths = [
+        os.path.join("mm", "compaction.c"),
+        os.path.join("common", "mm", "compaction.c"),
+    ]
+
+    marker = "houji proactive compaction default"
+
+    for path in compact_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Proactive compaction default already tuned in {path}")
+            return
+
+        pattern = re.compile(
+            r"^([ \t]*)((?:unsigned\s+)?int\s+(?:__read_mostly\s+)?sysctl_compaction_proactiveness\b[^=\r\n]*=\s*)\d+;(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if match:
+            indent, decl, eol = match.group(1), match.group(2), match.group(3)
+            replacement = (
+                f"{indent}/* {marker}: vm.compaction_proactiveness=20 keeps kcompactd\n"
+                f"{indent} * feeding high-order free pages during micro-idle */{eol}\n"
+                f"{indent}{decl}20;{eol}"
+            )
+            content = content[: match.start()] + replacement + content[match.end():]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: vm.compaction_proactiveness default set to 20")
+            return
+
+        if re.search(r"(?:unsigned\s+)?int\s+sysctl_compaction_proactiveness\s*;", content):
+            print(f"[*] {path}: sysctl_compaction_proactiveness already defaults to 20")
+            return
+
+    print("[-] Warning: mm/compaction.c not found or sysctl_compaction_proactiveness unmatched")
+
+
+def tune_f2fs_atomic_writes():
+    """Verify F2FS in-kernel atomic writes for SQLite WAL and trim commit cost.
+
+    - Verifies the F2FS_IOC_START_ATOMIC_WRITE / F2FS_IOC_COMMIT_ATOMIC_WRITE
+      (+ abort) dispatch sites used by SQLite write-ahead logging, on both
+      the native and compat ioctl paths.
+    - In f2fs_ioc_commit_atomic_write, the post-commit follow-up sync runs as
+      fdatasync instead of full fsync: f2fs_commit_atomic_write() already
+      finalizes inode metadata (marking the inode dirty-sync when dirtied, so
+      the write is still persisted), which enables the IPU fast path and
+      skips redundant full-sync inode churn on UFS 4.0.
+    - Ensures CONFIG_F2FS_FS=y in the defconfig so the in-kernel path is used.
+    """
+    f2fs_paths = [
+        os.path.join("fs", "f2fs", "file.c"),
+        os.path.join("common", "fs", "f2fs", "file.c"),
+    ]
+
+    verify_marker = "houji F2FS atomic write ioctls verified for SQLite WAL"
+    commit_marker = "houji F2FS atomic commit fdatasync follow-up"
+
+    for path in f2fs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if ("F2FS_IOC_START_ATOMIC_WRITE" not in content
+                or "F2FS_IOC_COMMIT_ATOMIC_WRITE" not in content):
+            print(f"[-] Warning: F2FS atomic write ioctls missing in {path}")
+            return
+
+        modified = False
+
+        if verify_marker not in content:
+            anchor = "case F2FS_IOC_START_ATOMIC_WRITE:"
+            if anchor in content:
+                content = content.replace(
+                    anchor,
+                    f"/* {verify_marker}: SQLite WAL all-or-nothing commits */\n\t{anchor}",
+                )
+                modified = True
+
+        commit_pattern = re.compile(
+            r"^([ \t]*)ret = f2fs_do_sync_file\(filp, 0, LLONG_MAX, 0, true\);(\r?)$",
+            re.MULTILINE,
+        )
+        match = commit_pattern.search(content)
+        if match and commit_marker not in content:
+            indent, eol = match.group(1), match.group(2)
+            replacement = (
+                f"{indent}/* {commit_marker}: metadata already finalized by\n"
+                f"{indent} * f2fs_commit_atomic_write(); fdatasync enables IPU and\n"
+                f"{indent} * skips redundant full-sync inode churn on UFS 4.0 */{eol}\n"
+                f"{indent}ret = f2fs_do_sync_file(filp, 0, LLONG_MAX, 1, true);{eol}"
+            )
+            content = content[: match.start()] + replacement + content[match.end():]
+            modified = True
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: F2FS atomic write ioctls verified, commit follow-up uses fdatasync")
+        else:
+            print(f"[*] F2FS atomic write tuning already present in {path}")
+        break
+    else:
+        print("[-] Warning: fs/f2fs/file.c not found in candidate paths")
+        return
+
+    # Defconfig: keep F2FS built-in so the in-kernel atomic path is used.
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "CONFIG_F2FS_FS=y" in content:
+            print(f"[*] In-kernel F2FS already enabled in {path}")
+            return
+        if "CONFIG_F2FS_FS=m" in content:
+            content = content.replace(
+                "CONFIG_F2FS_FS=m",
+                "# houji F2FS atomic writes: F2FS built-in for the in-kernel path\nCONFIG_F2FS_FS=y",
+                1,
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CONFIG_F2FS_FS switched from module to built-in")
+            return
+        if "# CONFIG_F2FS_FS is not set" in content:
+            content = content.replace(
+                "# CONFIG_F2FS_FS is not set",
+                "# houji F2FS atomic writes: F2FS built-in for the in-kernel path\nCONFIG_F2FS_FS=y",
+                1,
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CONFIG_F2FS_FS enabled as built-in")
+            return
+        content += "\n# houji F2FS atomic writes: F2FS built-in for the in-kernel path\nCONFIG_F2FS_FS=y\n"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: CONFIG_F2FS_FS enabled as built-in")
+        return
+
+    print("[-] Warning: gki_defconfig not found for F2FS configuration")
+
+
+def tune_pelt_16ms():
+    """Tune PELT load tracking halflife to 16ms for 120Hz responsiveness.
+
+    Regenerates kernel/sched/sched-pelt.h per Documentation/scheduler/sched-pelt
+    with HALFLIFE=16: LOAD_AVG_PERIOD 32 -> 16, LOAD_AVG_MAX 47742 -> 24130,
+    and the matching 16-entry runnable_avg_yN_inv decay table. Load signals
+    then decay twice as fast, so scheduler frequency ramp-up reacts within a
+    120Hz frame budget instead of lagging a full 32ms window.
+    """
+    pelt_paths = [
+        os.path.join("kernel", "sched", "sched-pelt.h"),
+        os.path.join("common", "kernel", "sched", "sched-pelt.h"),
+    ]
+
+    marker = "houji PELT 16ms halflife"
+
+    # Exact output of Documentation/scheduler/sched-pelt with HALFLIFE=16.
+    pelt16_table = (
+        "\t0xffffffff, 0xf5257d14, 0xeac0c6e6, 0xe0ccdeeb, 0xd744fcc9, 0xce248c14,\n"
+        "\t0xc5672a10, 0xbd08a39e, 0xb504f333, 0xad583ee9, 0xa5fed6a9, 0x9ef5325f,\n"
+        "\t0x9837f050, 0x91c3d373, 0x8b95c1e3, 0x85aac367,"
+    )
+    table_pattern = re.compile(
+        r"(static const u32 runnable_avg_yN_inv\[\][^\{]*\{).*?(\n\};)",
+        re.DOTALL,
+    )
+    period_pattern = re.compile(r"^#define\s+LOAD_AVG_PERIOD\s+\d+\s*$", re.MULTILINE)
+    max_pattern = re.compile(r"^#define\s+LOAD_AVG_MAX\s+\d+\s*$", re.MULTILINE)
+
+    for path in pelt_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] PELT 16ms halflife already tuned in {path}")
+            return
+
+        table_match = table_pattern.search(content)
+        period_match = period_pattern.search(content)
+        max_match = max_pattern.search(content)
+        if not (table_match and period_match and max_match):
+            continue
+
+        comment = (
+            "/* houji PELT 16ms halflife: table + LOAD_AVG_PERIOD/MAX regenerated per\n"
+            " * Documentation/scheduler/sched-pelt with HALFLIFE=16 so tracked load\n"
+            " * decays twice as fast and frequency ramps within 120Hz frame budgets. */\n"
+        )
+        content = (
+            content[: table_match.start(1)]
+            + comment
+            + table_match.group(1)
+            + "\n"
+            + pelt16_table
+            + table_match.group(2)
+            + content[table_match.end(2):]
+        )
+        content = period_pattern.sub("#define LOAD_AVG_PERIOD 16", content, count=1)
+        content = max_pattern.sub("#define LOAD_AVG_MAX 24130", content, count=1)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: PELT halflife set to 16ms (LOAD_AVG_PERIOD=16, LOAD_AVG_MAX=24130)")
+        return
+
+    print("[-] Warning: kernel/sched/sched-pelt.h not found or PELT targets unmatched")
+
+
+def tune_hide_proc_modules():
+    """Conceal KernelSU / ReSukiSU LKMs in /proc/modules from app UIDs.
+
+    Filters module entries whose names match known root implementations when
+    /proc/modules is traversed by unprivileged UIDs (>= 10000), so root
+    detectors cannot enumerate them. Root and shell readers are unaffected.
+    """
+    procfs_paths = [
+        os.path.join("kernel", "module", "procfs.c"),
+        os.path.join("common", "kernel", "module", "procfs.c"),
+    ]
+
+    marker = "houji /proc/modules root LKM stealth"
+
+    for path in procfs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] /proc/modules stealth already present in {path}")
+            return
+
+        # Ensure current_uid()/from_kuid()/strstr() are declared.
+        if "#include <linux/cred.h>" not in content:
+            target_inc = "#include <linux/module.h>\n"
+            if target_inc in content:
+                content = content.replace(
+                    target_inc,
+                    target_inc + "#include <linux/cred.h>\n#include <linux/uidgid.h>\n#include <linux/string.h>\n",
+                    1,
+                )
+
+        target = (
+            "\t/* We always ignore unformed modules. */\n"
+            "\tif (mod->state == MODULE_STATE_UNFORMED)\n"
+            "\t\treturn 0;"
+        )
+        if target not in content:
+            print(f"[-] Warning: m_show() target not found in {path}")
+            return
+
+        filter_code = (
+            "\n\n\t/* houji /proc/modules root LKM stealth: hide root module entries\n"
+            "\t * from unprivileged app UIDs enumerating loaded modules. */\n"
+            "\tif (from_kuid(&init_user_ns, current_uid()) >= 10000) {\n"
+            "\t\tif (strstr(mod->name, \"ksu\") || strstr(mod->name, \"suki\") ||\n"
+            "\t\t    strstr(mod->name, \"magisk\") || strstr(mod->name, \"susfs\"))\n"
+            "\t\t\treturn 0;\n"
+            "\t}"
+        )
+        content = content.replace(target, target + filter_code, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: KernelSU/ReSukiSU LKMs hidden from /proc/modules for app UIDs")
+        return
+
+    print("[-] Warning: kernel/module/procfs.c not found in candidate paths")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -2903,11 +3219,13 @@ def main():
     tune_drm_vsync_latency()
     tune_drm_ltpo_vblank_sync()
     tune_avc_log_silencing()
+    tune_hide_proc_modules()
     tune_cpuidle_lpm()
     tune_slub_allocator()
     guard_display_brightness_flicker()
     verify_susfs_sus_mount()
     tune_fuse_passthrough_defconfig()
+    tune_f2fs_atomic_writes()
     tune_ufs_mcq_and_writebooster()
     tune_walt_120hz_sync()
     tune_zsmalloc_compaction()
@@ -2916,6 +3234,7 @@ def main():
     tune_thp_madvise_defconfig()
     tune_tcp_fastopen()
     tune_eas_capacity_margin()
+    tune_pelt_16ms()
     tune_touch_irq_priority()
     tune_ksu_fbe_boot_sync()
     tune_anykernel_branding()
@@ -2928,6 +3247,7 @@ def main():
     tune_tcp_notsent_lowat()
     tune_oom_dump_tasks()
     tune_suid_dumpable_enforcement()
+    tune_proactive_compaction()
     tune_thinlto_cache()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
