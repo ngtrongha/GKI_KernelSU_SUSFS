@@ -952,7 +952,7 @@ jobs:
       group: update-verified-pins-${{ github.repository }}
       queue: max
       cancel-in-progress: false
-    if: "github.event_name == 'workflow_dispatch' && !inputs.test_release_notes && inputs.commit_mode == 'update'"
+    if: "github.event_name == 'workflow_dispatch' && !inputs.test_release_notes && inputs.commit_mode == 'update' && always()"
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -1092,7 +1092,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && !inputs.test_release_notes && (inputs.release_type == 'Pre-Release' || inputs.release_type == 'Release')
+    if: github.event_name == 'workflow_dispatch' && !inputs.test_release_notes && (inputs.release_type == 'Pre-Release' || inputs.release_type == 'Release') && always()
     permissions:
       contents: write
     needs:
@@ -1125,7 +1125,7 @@ jobs:
           local job_name="$2"
           local result="$3"
           
-          if [[ "$current_type" == "all" || "$current_type" == "$target" ]]; then
+          if [[ "${current_type,,}" == "all" || "$current_type" == "$target" ]]; then
             if [[ "$result" != "success" ]]; then
               echo "Required job $job_name did not succeed (result: $result)"
               failed=1
