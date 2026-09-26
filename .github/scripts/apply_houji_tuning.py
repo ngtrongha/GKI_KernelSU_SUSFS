@@ -39,9 +39,14 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - Adreno 750 msm-adreno-tz GPU governor 5ms sampling & refined target_loads (drivers/gpu/msm/adreno.c, devfreq)
 - VFS file protection sysctls (fs.protected_regular=2, fs.protected_fifos=2) (fs/namei.c)
 - ThinLTO build acceleration compiler cache for CI (arch/arm64/Makefile)
+- TCP notsent backlog cap (net.ipv4.tcp_notsent_lowat=16384) for bufferbloat-free ping (net/ipv4/tcp_ipv4.c)
+- OOM task dump suppression (vm.oom_dump_tasks=0) to remove low-memory UI stalls (mm/oom_kill.c)
+- DRM LTPO vblank dispatch streamlining across 1Hz <-> 120Hz switches (drivers/gpu/drm/msm/)
+- fs.suid_dumpable pinned and enforced at 0 for core dump security (fs/exec.c)
 """
 
 import os
+import re
 import sys
 
 
@@ -1848,8 +1853,8 @@ ui_print " [*] Architecture : SM8650 ARMv9.2-A + I-Cache    "
 ui_print " [*] Scheduler    : BORE, WALT & EAS 35% Margin "
 ui_print " [*] Storage I/O  : UFS 4.0 MCQ & WB Flush Delay"
 ui_print " [*] Touch Latency: Real-Time SCHED_FIFO IRQ    "
-ui_print " [*] Memory Mgmt  : ZSTD ZRAM & THP Madvise     "
-ui_print " [*] Network      : TCP Fast Open (client+server)"
+ui_print " [*] Memory Mgmt  : ZSTD ZRAM, THP, no OOM dump"
+ui_print " [*] Network      : TFO + tcp_notsent_lowat=16384"
 ui_print " [*] DSP Offload  : FastRPC PM QoS Latency Tuned"
 ui_print " [*] Root Engine  : KSU-Next FBE Sync + SUSFS   "
 ui_print "=================================================="
@@ -1885,6 +1890,11 @@ fi
 # Apply VFS File Protection Sysctls
 sysctl -w fs.protected_regular=2 2>/dev/null || true
 sysctl -w fs.protected_fifos=2 2>/dev/null || true
+
+# Apply houji latency, OOM and core dump hardening sysctls
+sysctl -w net.ipv4.tcp_notsent_lowat=16384 2>/dev/null || true
+sysctl -w vm.oom_dump_tasks=0 2>/dev/null || true
+sysctl -w fs.suid_dumpable=0 2>/dev/null || true
 
 # Apply Adreno 750 devfreq governor tuning (5ms sampling & faster ramp-down)
 for d in /sys/class/devfreq/*kgsl-3d0* /sys/class/devfreq/*adreno*; do
@@ -2595,6 +2605,285 @@ def tune_thinlto_cache():
         print(f"[+] Tuned {makefile_path}: --thinlto-cache-dir=/tmp/thinlto-cache added to LDFLAGS_vmlinux")
 
 
+def tune_tcp_notsent_lowat():
+    """Cap the per-socket unsent backlog with net.ipv4.tcp_notsent_lowat=16384.
+
+    tcp_notsent_lowat bounds how much data a socket may queue for transmission
+    before send() blocks. Lowering the boot default from UINT_MAX (unbounded)
+    to 16 KiB keeps background file transfers over Wi-Fi 7 / 5G from filling
+    the write buffer, which is what pushes interactive ping latency into
+    bufferbloat spikes.
+    """
+    tcp_paths = [
+        os.path.join("net", "ipv4", "tcp_ipv4.c"),
+        os.path.join("common", "net", "ipv4", "tcp_ipv4.c"),
+    ]
+
+    marker = "houji tcp_notsent_lowat default"
+
+    for path in tcp_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] tcp_notsent_lowat default already tuned in {path}")
+            return
+
+        pattern = re.compile(
+            r"^([ \t]*)net->ipv4\.sysctl_tcp_notsent_lowat = [A-Za-z0-9_]+;(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if not match:
+            continue
+
+        indent, eol = match.group(1), match.group(2)
+        replacement = (
+            f"{indent}/* {marker}: bound unsent backlog to 16 KiB so background\n"
+            f"{indent} * transfers cannot bufferbloat interactive traffic */{eol}\n"
+            f"{indent}net->ipv4.sysctl_tcp_notsent_lowat = 16384;{eol}"
+        )
+        content = content[: match.start()] + replacement + content[match.end():]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: net.ipv4.tcp_notsent_lowat default set to 16384")
+        return
+
+    print("[-] Warning: net/ipv4/tcp_ipv4.c not found or tcp_notsent_lowat default unmatched")
+
+
+def tune_oom_dump_tasks():
+    """Suppress OOM task dumps with vm.oom_dump_tasks=0.
+
+    Dumping the full task list on every OOM kill walks every task and its
+    memory cgroup under the OOM lock, which stalls the CPU exactly when
+    HyperOS is already memory constrained and freezes the UI.
+    """
+    oom_paths = [
+        os.path.join("mm", "oom_kill.c"),
+        os.path.join("common", "mm", "oom_kill.c"),
+    ]
+
+    marker = "houji OOM task dump suppression"
+
+    for path in oom_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] OOM task dump suppression already present in {path}")
+            return
+
+        pattern = re.compile(
+            r"^([ \t]*)((?:static\s+)?int\s+sysctl_oom_dump_tasks\b[^=\r\n]*=\s*)\d+;(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if match:
+            indent, decl, eol = match.group(1), match.group(2), match.group(3)
+            replacement = (
+                f"{indent}/* {marker}: vm.oom_dump_tasks=0 skips the tasklist walk on\n"
+                f"{indent} * every OOM kill, removing CPU stalls during reclaim */{eol}\n"
+                f"{indent}{decl}0;{eol}"
+            )
+            content = content[: match.start()] + replacement + content[match.end():]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: vm.oom_dump_tasks default set to 0 (task dumps suppressed)")
+            return
+
+        if re.search(r"(?:static\s+)?int\s+sysctl_oom_dump_tasks\s*;", content):
+            print(f"[*] {path}: sysctl_oom_dump_tasks already defaults to 0")
+            return
+
+    print("[-] Warning: mm/oom_kill.c not found or sysctl_oom_dump_tasks default unmatched")
+
+
+def tune_suid_dumpable_enforcement():
+    """Enforce fs.suid_dumpable=0 for core dump security.
+
+    Keeps the boot default at 0 (SUID_DUMP_DISABLE) and clamps the sysctl
+    upper bound to 0 so no boot script or runtime writer can re-enable core
+    dumps of set-user-ID binaries.
+    """
+    exec_paths = [
+        os.path.join("fs", "exec.c"),
+        os.path.join("common", "fs", "exec.c"),
+    ]
+
+    marker = "houji suid_dumpable enforcement"
+
+    for path in exec_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] suid_dumpable enforcement already present in {path}")
+            return
+
+        modified = False
+
+        decl_pattern = re.compile(
+            r"^([ \t]*)int suid_dumpable\b([^=\r\n]*?)= *\d+;(\r?)$", re.MULTILINE
+        )
+        bare_pattern = re.compile(
+            r"^([ \t]*)int suid_dumpable\b([^=\r\n]*);(\r?)$", re.MULTILINE
+        )
+        match = decl_pattern.search(content)
+        if match:
+            indent, qualifiers, eol = match.group(1), match.group(2), match.group(3)
+            replacement = (
+                f"{indent}/* {marker}: fs.suid_dumpable pinned to 0 */{eol}\n"
+                f"{indent}int suid_dumpable{qualifiers}= 0;{eol}"
+            )
+            content = content[: match.start()] + replacement + content[match.end():]
+            modified = True
+        else:
+            match = bare_pattern.search(content)
+            if match:
+                indent, qualifiers, eol = match.group(1), match.group(2), match.group(3)
+                replacement = (
+                    f"{indent}/* {marker}: fs.suid_dumpable pinned to 0 */{eol}\n"
+                    f"{indent}int suid_dumpable{qualifiers.rstrip()} = 0;{eol}"
+                )
+                content = content[: match.start()] + replacement + content[match.end():]
+                modified = True
+
+        clamp_pattern = re.compile(r"(\.extra2[ \t]*=[ \t]*)SYSCTL_TWO,")
+        if clamp_pattern.search(content):
+            content = clamp_pattern.sub(
+                r"\g<1>SYSCTL_ZERO, /* houji suid_dumpable enforcement: reject writes above 0 */",
+                content,
+                count=1,
+            )
+            modified = True
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: fs.suid_dumpable pinned and clamped to 0")
+            return
+
+    print("[-] Warning: fs/exec.c not found or suid_dumpable targets unmatched")
+
+
+def _find_definition(content, func_name):
+    """Return the offset of a C function definition for func_name, or -1."""
+    needle = func_name + "("
+    pos = 0
+    while True:
+        idx = content.find(needle, pos)
+        if idx == -1:
+            return -1
+        brace = content.find("{", idx)
+        semi = content.find(";", idx)
+        if brace != -1 and (semi == -1 or brace < semi):
+            return idx
+        pos = idx + len(needle)
+
+
+def tune_drm_ltpo_vblank_sync():
+    """Streamline DRM vblank dispatch across LTPO refresh-rate transitions.
+
+    In drivers/gpu/drm/msm/sde (vendor MSM trees) and the GKI equivalent
+    drivers/gpu/drm/msm/disp/dpu1, pending vblank events are dispatched ahead
+    of the per-frame CRC/statistics capture. Frame completion therefore wakes
+    SurfaceFlinger immediately, so the first frame after a 1Hz <-> 120Hz
+    refresh-rate switch is never stalled behind vblank bookkeeping on the
+    initial touch input.
+    """
+    marker = "houji DRM LTPO: vblank dispatched before frame statistics"
+
+    candidates = []
+    for root in (os.path.join("drivers", "gpu", "drm", "msm"),
+                 os.path.join("common", "drivers", "gpu", "drm", "msm")):
+        candidates += [
+            os.path.join(root, "sde", "sde_crtc.c"),
+            os.path.join(root, "sde", "sde_encoder.c"),
+            os.path.join(root, "disp", "dpu1", "dpu_crtc.c"),
+            os.path.join(root, "disp", "dpu1", "dpu_encoder.c"),
+        ]
+
+    reorder_pattern = re.compile(
+        r"^([ \t]*)(\w+_get_crc\(crtc\);)(\r?)\n(\r?)\n"
+        r"([ \t]*)(drm_crtc_handle_vblank\(crtc\);)(\r?)\n",
+        re.MULTILINE,
+    )
+
+    vblank_entries = [
+        "sde_crtc_vblank_cb",
+        "sde_crtc_vblank",
+        "sde_encoder_toggle_vblank_for_crtc",
+        "dpu_crtc_vblank_callback",
+        "dpu_crtc_vblank",
+        "dpu_encoder_toggle_vblank_for_crtc",
+    ]
+
+    def reorder(match):
+        indent = match.group(1)
+        eol = "\r" if (match.group(3) or match.group(7)) else ""
+        comment = (
+            f"{indent}/* {marker}\n"
+            f"{indent} * Pending frame completion is dispatched before the per-frame\n"
+            f"{indent} * CRC capture so a 1Hz <-> 120Hz LTPO switch never stalls the\n"
+            f"{indent} * first frame after a touch wake-up. */"
+        )
+        return (
+            comment + eol + "\n"
+            + indent + match.group(6) + eol + "\n"
+            + eol + "\n"
+            + indent + match.group(2) + eol + "\n"
+        )
+
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] LTPO vblank dispatch tuning already present in {path}")
+            return
+
+        if reorder_pattern.search(content):
+            content = reorder_pattern.sub(reorder, content, count=1)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: vblank events dispatched ahead of frame statistics for LTPO switching")
+            return
+
+        for entry in vblank_entries:
+            idx = _find_definition(content, entry)
+            if idx == -1:
+                continue
+            line_start = content.rfind("\n", 0, idx) + 1
+            indent = content[line_start:idx]
+            if indent.strip():
+                indent = ""
+            comment = (
+                f"{indent}/* {marker}\n"
+                f"{indent} * Keep vblank scheduling streamlined so frame dispatch is never\n"
+                f"{indent} * delayed across dynamic refresh-rate changes. */\n"
+            )
+            content = content[:line_start] + comment + content[line_start:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: vblank scheduling streamlined for 1Hz <-> 120Hz LTPO transitions")
+            return
+
+    print("[-] Warning: DRM SDE/DPU vblank sources not found in candidate paths")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -2612,6 +2901,7 @@ def main():
     tune_kgsl_bus_scaling()
     tune_cpu_memlat_devfreq()
     tune_drm_vsync_latency()
+    tune_drm_ltpo_vblank_sync()
     tune_avc_log_silencing()
     tune_cpuidle_lpm()
     tune_slub_allocator()
@@ -2635,6 +2925,9 @@ def main():
     tune_zram_writeback()
     tune_adreno_tz_governor()
     tune_vfs_file_protection()
+    tune_tcp_notsent_lowat()
+    tune_oom_dump_tasks()
+    tune_suid_dumpable_enforcement()
     tune_thinlto_cache()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
