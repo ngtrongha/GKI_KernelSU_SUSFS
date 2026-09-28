@@ -48,6 +48,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - PELT load tracking halflife tuned to 16ms for 120Hz frequency ramp-up (kernel/sched/sched-pelt.h)
 - /proc/modules root LKM stealth for unprivileged app UIDs (kernel/module/procfs.c)
 - AnyKernel build-commit logging from GITHUB_SHA for traceable houji builds
+- SUSFS cmdline/bootconfig green spoofing hooks (verifiedbootstate=green, flash.locked=1 via SUSFS buffer) (fs/susfs.c, fs/proc/)
+- PSI memory trigger headroom (+10%) before lmkd high-pressure signals (kernel/sched/psi.c)
+- DSI power-collapse entry documentation for PSR static frames (drivers/gpu/drm/msm/dsi/)
+- /proc/version_signature custom-leakage silencing when present (fs/proc/)
 """
 
 import os
@@ -275,7 +279,14 @@ def tune_susfs_uname_stealth():
             )
             if target in c:
                 c = c.replace(target, cleaner, 1)
-                c = c.replace("utsname()->release,", "clean_release,", 1)
+                # NOTE: rewrite the release use-site only in the code BELOW
+                # the injected cleaner. Replacing the first file-wide match
+                # would hit the cleaner's own strscpy source, producing a
+                # self-copy while leaving the real leak in place.
+                head_end = c.find(cleaner) + len(cleaner)
+                head, tail = c[:head_end], c[head_end:]
+                tail = re.sub(r"utsname\(\)->release\b", "clean_release", tail, count=1)
+                c = head + tail
                 with open(proc_ver_path, "w", encoding="utf-8") as f:
                     f.write(c)
                 print("[+] Tuned fs/proc/version.c: custom localversion hidden from /proc/version")
@@ -3200,6 +3211,388 @@ def tune_hide_proc_modules():
     print("[-] Warning: kernel/module/procfs.c not found in candidate paths")
 
 
+def tune_susfs_cmdline_spoof():
+    """Enable SUSFS /proc/cmdline and /proc/bootconfig green spoofing.
+
+    - Ensures CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y (the KSU-tree
+      symbol for CONFIG_SUSFS_SPOOF_CMDLINE) when SUSFS sources are present.
+      Skipped entirely when fs/susfs.c is absent so flavors that deliberately
+      disable SUSFS keep their configuration.
+    - Verifies the bootconfig interception hook installed by the SUSFS patch.
+    - Adds the matching interception hook to cmdline_proc_show(), mirroring
+      the proven bootconfig pattern exactly (same ifdef, same static key,
+      same upstream helper, stock fallthrough). The verifiedbootstate=green
+      and flash.locked=1 values themselves are supplied post-boot from
+      userspace through the SUSFS fake-cmdline buffer (ksu_susfs tool reads
+      them from a user-provided file), so no kernel string surgery is needed.
+
+    Bootloop safety: compiled out when the config is off; the static key
+    defaults to FALSE so early-boot init reads take the 100% stock
+    saved_command_line path (single NOP branch). Only a privileged
+    post-boot userspace writer can change what is shown.
+    """
+    susfs_paths = [
+        os.path.join("fs", "susfs.c"),
+        os.path.join("common", "fs", "susfs.c"),
+    ]
+
+    susfs_path = None
+    for candidate in susfs_paths:
+        if os.path.isfile(candidate):
+            susfs_path = candidate
+            break
+
+    if susfs_path is None:
+        print("[-] Info: fs/susfs.c not present (non-SUSFS flavor); cmdline spoof tuning skipped")
+        return
+
+    with open(susfs_path, "r", encoding="utf-8", errors="ignore") as f:
+        susfs_content = f.read()
+
+    cmdline_marker = "houji SUSFS cmdline green spoofing"
+    bootconfig_marker = "houji SUSFS bootconfig green spoofing"
+
+    if "susfs_spoof_cmdline_or_bootconfig" not in susfs_content:
+        print(f"[-] Warning: susfs_spoof_cmdline_or_bootconfig() missing in {susfs_path}")
+        return
+    print(f"[*] SUSFS cmdline/bootconfig spoof helper verified in {susfs_path}")
+
+    # Part 1: ensure the Kconfig is active in the defconfig.
+    defconfig_paths = [
+        os.path.join("arch", "arm64", "configs", "gki_defconfig"),
+        os.path.join("common", "arch", "arm64", "configs", "gki_defconfig"),
+    ]
+    for path in defconfig_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" in content:
+            print(f"[*] CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG already active in {path}")
+            break
+        if "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=n" in content:
+            content = content.replace(
+                "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=n",
+                "# houji SUSFS cmdline green spoofing (verifiedbootstate=green, flash.locked=1)\n"
+                "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
+                1,
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG enabled")
+            break
+        if "CONFIG_KSU_SUSFS=y" in content or "CONFIG_KSU_SUSFS_SUS_MOUNT=y" in content:
+            content += (
+                "\n# houji SUSFS cmdline green spoofing (verifiedbootstate=green, flash.locked=1)\n"
+                "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\n"
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG enabled")
+            break
+    else:
+        print("[-] Info: gki_defconfig has no SUSFS symbols; cmdline spoof config left untouched")
+
+    # Part 2: verify + mark the bootconfig interception installed by SUSFS.
+    bootconfig_paths = [
+        os.path.join("fs", "proc", "bootconfig.c"),
+        os.path.join("common", "fs", "proc", "bootconfig.c"),
+    ]
+    for path in bootconfig_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "susfs_spoof_cmdline_or_bootconfig(m);" not in content:
+            print(f"[-] Warning: SUSFS bootconfig hook missing in {path}")
+            continue
+        if bootconfig_marker in content:
+            print(f"[*] Bootconfig green spoofing already marked in {path}")
+            break
+        bootconfig_pattern = re.compile(
+            r"^([ \t]*)susfs_spoof_cmdline_or_bootconfig\(m\);(\r?)$", re.MULTILINE
+        )
+        bootconfig_match = bootconfig_pattern.search(content)
+        if not bootconfig_match:
+            print(f"[-] Warning: SUSFS bootconfig hook shape unrecognized in {path}")
+            continue
+        indent, eol = bootconfig_match.group(1), bootconfig_match.group(2)
+        replacement = (
+            f"{indent}/* houji SUSFS bootconfig green spoofing: spoofed buffer carries\n"
+            f"{indent} * verifiedbootstate=green + flash.locked=1 when set from userspace */{eol}\n"
+            f"{indent}susfs_spoof_cmdline_or_bootconfig(m);{eol}"
+        )
+        content = (
+            content[: bootconfig_match.start()]
+            + replacement
+            + content[bootconfig_match.end():]
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Marked {path}: bootconfig green spoofing verified")
+        break
+    else:
+        print("[-] Warning: fs/proc/bootconfig.c not found in candidate paths")
+
+    # Part 3: add the matching interception hook to /proc/cmdline.
+    cmdline_paths = [
+        os.path.join("fs", "proc", "cmdline.c"),
+        os.path.join("common", "fs", "proc", "cmdline.c"),
+    ]
+    for path in cmdline_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "susfs_spoof_cmdline_or_bootconfig" in content or cmdline_marker in content:
+            print(f"[*] Cmdline green spoofing already present in {path}")
+            return
+
+        target_variants = [
+            "static int cmdline_proc_show(struct seq_file *m, void *v)\n{\n\tseq_puts(m, saved_command_line);",
+            "static int cmdline_proc_show(struct seq_file *m, void *v)\r\n{\r\n\tseq_puts(m, saved_command_line);",
+        ]
+        hooked = False
+        for target in target_variants:
+            if target not in content:
+                continue
+            hook = (
+                "#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\n"
+                "extern struct static_key_false susfs_is_fake_cmdline_or_bootconfig_buffer_set;\n"
+                "extern void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);\n"
+                "#endif\n"
+                "\n"
+                "/* houji SUSFS cmdline green spoofing: intercept /proc/cmdline reads and\n"
+                " * serve the userspace-provided fake buffer (verifiedbootstate=green,\n"
+                " * flash.locked=1). Compiled out without SUSFS; falls through to the\n"
+                " * stock saved_command_line path until a fake buffer is set, so early\n"
+                " * boot readers always see pristine content. */\n"
+                "static int cmdline_proc_show(struct seq_file *m, void *v)\n"
+                "{\n"
+                "#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\n"
+                "\tif (static_branch_likely(&susfs_is_fake_cmdline_or_bootconfig_buffer_set)) {\n"
+                "\t\tsusfs_spoof_cmdline_or_bootconfig(m);\n"
+                "\t\treturn 0;\n"
+                "\t}\n"
+                "#endif\n"
+                "\tseq_puts(m, saved_command_line);"
+            )
+            content = content.replace(target, hook, 1)
+            hooked = True
+            break
+
+        if not hooked:
+            print(f"[-] Warning: cmdline_proc_show() shape unrecognized in {path}; left untouched for safety")
+            return
+
+        if "#include <linux/jump_label.h>" not in content:
+            inc_anchor = "#include <linux/seq_file.h>\n"
+            if inc_anchor in content:
+                content = content.replace(
+                    inc_anchor, inc_anchor + "#include <linux/jump_label.h>\n", 1
+                )
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: /proc/cmdline green spoofing hook installed (stock fallthrough by default)")
+        return
+
+    print("[-] Warning: fs/proc/cmdline.c not found in candidate paths")
+
+
+def tune_psi_lmkd_headroom():
+    """Grant MGLRU + ZRAM headroom before PSI signals lmkd pressure.
+
+    Raises memory-stall PSI trigger thresholds by ~10% at registration time
+    (both SOME and FULL), so transient reclaim spikes are absorbed before
+    userspace lmkd is woken to kill multitasking apps. CPU/IO triggers are
+    untouched, and the userspace threshold validation above still applies to
+    the original values, so lmkd registration can never fail because of this.
+    """
+    psi_paths = [
+        os.path.join("kernel", "sched", "psi.c"),
+        os.path.join("common", "kernel", "sched", "psi.c"),
+    ]
+
+    marker = "houji PSI lmkd memory headroom"
+
+    for path in psi_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] PSI lmkd headroom already tuned in {path}")
+            return
+
+        target_variants = [
+            "\tt->threshold = threshold_us * NSEC_PER_USEC;",
+            "\tt->threshold = threshold_us * NSEC_PER_USEC;\r",
+        ]
+        hooked = False
+        for target in target_variants:
+            if target not in content:
+                continue
+            replacement = (
+                target
+                + "\n"
+                + "\t/* houji PSI lmkd memory headroom: +10% on memory stall triggers\n"
+                + "\t * so MGLRU + ZRAM ZSTD absorb spikes before lmkd is signaled.\n"
+                + "\t * CPU/IO triggers keep stock thresholds. */\n"
+                + "\tif (state == PSI_MEM_SOME || state == PSI_MEM_FULL)\n"
+                + "\t\tt->threshold += t->threshold / 10;"
+            )
+            content = content.replace(target, replacement, 1)
+            hooked = True
+            break
+
+        if not hooked:
+            print(f"[-] Warning: psi_trigger_create() threshold init not found in {path}")
+            return
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: memory PSI trigger thresholds raised ~10% for lmkd headroom")
+        return
+
+    print("[-] Warning: kernel/sched/psi.c not found in candidate paths")
+
+
+def tune_dsi_psr_power_collapse():
+    """Document the wait-free DSI power-collapse entry for PSR static frames.
+
+    The GKI DSI host driver carries no PSR state machine or collapse-delay
+    knobs (panel self-refresh entry lives in the vendor display driver), and
+    the controller teardown path (bridge post-disable -> host power-off, plus
+    runtime-PM bus-clock collapse) is already free of sleeps and completion
+    waits. This marks both entry points so the streamlined sequence is kept
+    intact. Comment-only: no functional change, zero black-screen risk.
+    """
+    marker = "houji DSI PSR power-collapse"
+
+    manager_paths = [
+        os.path.join("drivers", "gpu", "drm", "msm", "dsi", "dsi_manager.c"),
+        os.path.join("common", "drivers", "gpu", "drm", "msm", "dsi", "dsi_manager.c"),
+    ]
+    for path in manager_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if marker in content:
+            print(f"[*] DSI PSR power-collapse already documented in {path}")
+            break
+        anchor = "static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge)"
+        if anchor not in content:
+            continue
+        content = content.replace(
+            anchor,
+            "/* houji DSI PSR power-collapse: controller teardown on PSR/static-frame\n"
+            " * entry stays wait-free (host_disable -> irq off -> pll save -> power_off\n"
+            " * -> phy_disable) with no sleeps, so the AMOLED panel reaches autonomous\n"
+            " * self-refresh without frame dispatch stalls. Keep this sequence intact. */\n"
+            + anchor,
+            1,
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Documented {path}: wait-free DSI power-collapse entry for PSR")
+        break
+    else:
+        print("[-] Info: dsi_manager.c not found in candidate paths")
+
+    host_paths = [
+        os.path.join("drivers", "gpu", "drm", "msm", "dsi", "dsi_host.c"),
+        os.path.join("common", "drivers", "gpu", "drm", "msm", "dsi", "dsi_host.c"),
+    ]
+    for path in host_paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if marker in content:
+            print(f"[*] DSI PSR power-collapse already documented in {path}")
+            return
+        anchor = "int msm_dsi_runtime_suspend(struct device *dev)"
+        if anchor not in content:
+            continue
+        content = content.replace(
+            anchor,
+            "/* houji DSI PSR power-collapse: runtime-PM bus-clock collapse entry for\n"
+            " * panel self-refresh idle; must stay a straight-line teardown. */\n"
+            + anchor,
+            1,
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Documented {path}: runtime-PM DSI power-collapse entry for PSR")
+        return
+
+    print("[-] Info: dsi_host.c not found in candidate paths")
+
+
+def tune_version_signature_stealth():
+    """Silence custom localversion leakages via /proc/version_signature.
+
+    Extends the existing uname release-string cleansing to the
+    version_signature show path when this tree provides one. GKI 6.1 common
+    does not ship version_signature, in which case this is a deliberate
+    no-op: inventing a new proc file here could destabilize boot.
+    """
+    marker = "houji version_signature stealth"
+
+    candidates = [
+        os.path.join("fs", "proc", "version_signature.c"),
+        os.path.join("common", "fs", "proc", "version_signature.c"),
+    ]
+
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if "version_signature" not in content:
+            continue
+        if marker in content:
+            print(f"[*] version_signature stealth already present in {path}")
+            return
+        target = "static int version_proc_show(struct seq_file *m, void *v)\n{\n"
+        if target not in content:
+            print(f"[-] Warning: version_signature provider in {path} has unrecognized shape; left untouched for safety")
+            return
+        cleaner = (
+            "static int version_proc_show(struct seq_file *m, void *v)\n"
+            "{\n"
+            "\t/* houji version_signature stealth: strip custom localversion suffixes */\n"
+            "\tchar clean_release[65];\n"
+            "\tchar *tag;\n"
+            "\tstrscpy(clean_release, utsname()->release, sizeof(clean_release));\n"
+            '\ttag = strstr(clean_release, "-houji-tuning");\n'
+            "\tif (tag) *tag = '\\0';\n"
+            '\ttag = strstr(clean_release, "-Wild");\n'
+            "\tif (tag) *tag = '\\0';\n"
+            '\ttag = strstr(clean_release, "-HyperHouji");\n'
+            "\tif (tag) *tag = '\\0';\n"
+        )
+        content = content.replace(target, cleaner, 1)
+        # NOTE: the release use-site must be rewritten AFTER injecting the
+        # cleaner (scoped to the code below the function header), otherwise
+        # the first match would hit the cleaner's own strscpy source and
+        # produce a self-copy while leaving the real leak in place.
+        head_end = content.find(cleaner) + len(cleaner)
+        head, tail = content[:head_end], content[head_end:]
+        tail = re.sub(r"utsname\(\)->release\b", "clean_release", tail, count=1)
+        content = head + tail
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: custom localversion hidden from version_signature")
+        return
+
+    print("[-] Info: no version_signature provider in this tree; nothing to silence")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -3208,6 +3601,8 @@ def main():
     tune_damon_reclaim()
     tune_sm8650_thermal()
     tune_susfs_uname_stealth()
+    tune_version_signature_stealth()
+    tune_susfs_cmdline_spoof()
     tune_watermark_boost()
     tune_bypass_charging()
     tune_selinux_enforce_stealth()
@@ -3218,6 +3613,7 @@ def main():
     tune_cpu_memlat_devfreq()
     tune_drm_vsync_latency()
     tune_drm_ltpo_vblank_sync()
+    tune_dsi_psr_power_collapse()
     tune_avc_log_silencing()
     tune_hide_proc_modules()
     tune_cpuidle_lpm()
@@ -3248,9 +3644,10 @@ def main():
     tune_oom_dump_tasks()
     tune_suid_dumpable_enforcement()
     tune_proactive_compaction()
+    tune_psi_lmkd_headroom()
     tune_thinlto_cache()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
 
 if __name__ == "__main__":
-    main()
+    main()
