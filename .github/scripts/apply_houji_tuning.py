@@ -52,6 +52,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - PSI memory trigger headroom (+10%) before lmkd high-pressure signals (kernel/sched/psi.c)
 - DSI power-collapse entry documentation for PSR static frames (drivers/gpu/drm/msm/dsi/)
 - /proc/version_signature custom-leakage silencing when present (fs/proc/)
+- Schedutil 15ms down-rate-limit hold for Cortex-A720/X4 clusters (kernel/sched/cpufreq_schedutil.c)
+- VFS metadata cache pressure default (vm.vfs_cache_pressure=70) for dentry retention (fs/dcache.c)
+- SUSFS mountinfo stealth for Android isolated processes (fs/proc_namespace.c SUSFS hooks)
+- ALSA low-latency PM-QoS deadline tightening against DVFS underruns (sound/core/pcm_native.c)
 """
 
 import os
@@ -1912,6 +1916,8 @@ sysctl -w net.ipv4.tcp_notsent_lowat=16384 2>/dev/null || true
 sysctl -w vm.oom_dump_tasks=0 2>/dev/null || true
 sysctl -w fs.suid_dumpable=0 2>/dev/null || true
 sysctl -w vm.compaction_proactiveness=20 2>/dev/null || true
+sysctl -w vm.vfs_cache_pressure=70 2>/dev/null || true
+
 
 # Apply Adreno 750 devfreq governor tuning (5ms sampling & faster ramp-down)
 for d in /sys/class/devfreq/*kgsl-3d0* /sys/class/devfreq/*adreno*; do
@@ -3593,6 +3599,250 @@ def tune_version_signature_stealth():
     print("[-] Info: no version_signature provider in this tree; nothing to silence")
 
 
+def tune_schedutil_down_rate_limit():
+    """Hold big/prime-cluster frequency 15ms after load drops (schedutil).
+
+    GKI 6.1 schedutil merged the old up/down rate limits into a single
+    per-policy freq_update_delay_ns. In sugov_start(), policies whose
+    max_freq >= 2.8GHz (Cortex-A720/X4 clusters; A520 little tops out at
+    2.3GHz) get a 15000us hold so 120Hz micro-bursts ride out without
+    ping-ponging the regulator. Little-cluster policies keep the stock
+    driver transition-delay default. First tick from idle still applies
+    immediately (last_freq_update_time starts at 0).
+    """
+    schedutil_paths = [
+        os.path.join("kernel", "sched", "cpufreq_schedutil.c"),
+        os.path.join("drivers", "cpufreq", "cpufreq_schedutil.c"),
+        os.path.join("common", "kernel", "sched", "cpufreq_schedutil.c"),
+        os.path.join("common", "drivers", "cpufreq", "cpufreq_schedutil.c"),
+    ]
+
+    marker = "houji schedutil 15ms down-rate-limit hold"
+
+    delay_pattern = re.compile(
+        r"^([ \t]*)sg_policy->freq_update_delay_ns\s*=\s*sg_policy->tunables->rate_limit_us \* NSEC_PER_USEC;(\r?)$",
+        re.MULTILINE,
+    )
+
+    for path in schedutil_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Schedutil down-rate-limit already tuned in {path}")
+            return
+
+        match = delay_pattern.search(content)
+        if not match:
+            continue
+
+        indent, eol = match.group(1), match.group(2)
+        # Build the comment + gated override explicitly for clarity.
+        replacement = (
+            match.group(0)
+            + f"{eol}\n"
+            + f"{indent}/* {marker}:\n"
+            + f"{indent} * Hold 15ms on >= 2.8GHz policies (Cortex-A720/X4) so 120Hz\n"
+            + f"{indent} * micro-bursts ride out instead of ping-ponging the regulator. */\n"
+            + f"{indent}if (policy->cpuinfo.max_freq >= 2800000)\n"
+            + f"{indent}\tsg_policy->freq_update_delay_ns = 15000 * NSEC_PER_USEC;"
+            + (eol if eol else "")
+        )
+        content = content[: match.start()] + replacement + content[match.end():]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: 15ms schedutil hold on Cortex-A720/X4 policies")
+        return
+
+    print("[-] Warning: cpufreq_schedutil.c not found or freq_update_delay_ns init unmatched")
+
+
+def tune_vfs_cache_pressure():
+    """Retain VFS dentry/inode caches with vm.vfs_cache_pressure=70.
+
+    Lowers the reclaim pressure on directory metadata so HyperOS app
+    switching hits warm caches in LPDDR5X instead of re-reading UFS.
+    """
+    dcache_paths = [
+        os.path.join("fs", "dcache.c"),
+        os.path.join("common", "fs", "dcache.c"),
+    ]
+
+    marker = "houji vfs_cache_pressure default"
+
+    for path in dcache_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] vfs_cache_pressure default already tuned in {path}")
+            return
+
+        pattern = re.compile(
+            r"^([ \t]*)((?:unsigned\s+)?int\s+(?:__read_mostly\s+)?sysctl_vfs_cache_pressure\b[^=\r\n]*=\s*)\d+;(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if not match:
+            continue
+
+        indent, decl, eol = match.group(1), match.group(2), match.group(3)
+        replacement = (
+            f"{indent}/* {marker}: vm.vfs_cache_pressure=70 retains dentries/inodes\n"
+            f"{indent} * in RAM for faster app switching */{eol}\n"
+            f"{indent}{decl}70;{eol}"
+        )
+        content = content[: match.start()] + replacement + content[match.end():]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: vm.vfs_cache_pressure default set to 70")
+        return
+
+    print("[-] Warning: fs/dcache.c not found or sysctl_vfs_cache_pressure unmatched")
+
+
+def tune_susfs_isolated_mountinfo():
+    """Filter sus mounts from mountinfo for Android isolated processes.
+
+    Extends the SUSFS mountinfo interception (fs/proc_namespace.c, where
+    the GKI mount show/open helpers live) so queries from isolated_app /
+    SDK-sandbox contexts (appId 99000-99999 across all users) always take
+    the susfs_show_mountinfo filtered view, even when the global hide
+    toggle is off. Only KSU overlay entries are dropped; boot/init/shell
+    readers keep the stock view. Requires the SUSFS namespace hooks;
+    skipped cleanly when they are absent.
+    """
+    namespace_paths = [
+        os.path.join("fs", "proc_namespace.c"),
+        os.path.join("common", "fs", "proc_namespace.c"),
+    ]
+
+    marker = "houji isolated-app mountinfo stealth"
+
+    for path in namespace_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Isolated mountinfo stealth already present in {path}")
+            return
+
+        if ("susfs_show_mountinfo" not in content
+                or "CONFIG_KSU_SUSFS_SUS_MOUNT" not in content):
+            print(f"[-] Info: SUSFS namespace hooks absent in {path}; isolated mountinfo filter skipped")
+            return
+
+        if content.count("return mounts_open_common(inode, file, show_mountinfo);") != 1:
+            print(f"[-] Warning: mountinfo_open() shape unrecognized in {path}; left untouched for safety")
+            return
+
+        for inc in ("#include <linux/cred.h>\n", "#include <linux/uidgid.h>\n"):
+            if inc not in content:
+                sec_anchor = "#include <linux/security.h>\n"
+                if sec_anchor in content:
+                    content = content.replace(sec_anchor, sec_anchor + inc, 1)
+                else:
+                    first_inc = re.search(r"^#include .*$", content, re.MULTILINE)
+                    if first_inc:
+                        pos = first_inc.end()
+                        content = content[:pos] + "\n" + inc.rstrip("\n") + content[pos:]
+
+        anchor = "\treturn mounts_open_common(inode, file, show_mountinfo);"
+        block = (
+            "\t/* houji isolated-app mountinfo stealth: sus mounts stay hidden\n"
+            "\t * from Android isolated processes (appId 99000-99999, incl. SDK\n"
+            "\t * sandbox) even when the global hide toggle is off. Only KSU\n"
+            "\t * overlay entries are dropped; all other readers keep stock. */\n"
+            "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+            "\tif (likely(!susfs_is_current_ksu_domain())) {\n"
+            "\t\tuid_t reader_appid = from_kuid(&init_user_ns, current_uid()) % 100000;\n"
+            "\t\tif (reader_appid >= 99000)\n"
+            "\t\t\treturn mounts_open_common(inode, file, susfs_show_mountinfo);\n"
+            "\t}\n"
+            "#endif\n"
+            + anchor
+        )
+        content = content.replace(anchor, block, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: sus mounts filtered from isolated mountinfo queries")
+        return
+
+    print("[-] Warning: fs/proc_namespace.c not found in candidate paths")
+
+
+def tune_alsa_pcm_lowlatency():
+    """Tighten the low-latency ALSA PM-QoS deadline against DVFS underruns.
+
+    snd_pcm_hw_params() votes a CPU-latency PM-QoS deadline of 75% of the
+    period (period_to_usecs) so DVFS keeps CPUs responsive for refills.
+    For sub-5ms periods (low-latency streams, the ones that glitch when
+    frequency transitions starve them), use a 50% deadline instead.
+    Normal streams keep the stock 75% vote: no power-behavior change there.
+    """
+    pcm_paths = [
+        os.path.join("sound", "core", "pcm_native.c"),
+        os.path.join("common", "sound", "core", "pcm_native.c"),
+    ]
+
+    marker = "houji low-latency ALSA PM-QoS deadline"
+
+    for path in pcm_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] ALSA low-latency deadline already tuned in {path}")
+            return
+
+        target_variants = [
+            "\tusecs += ((750000 % runtime->rate) * runtime->period_size) /\n\t\truntime->rate;",
+            "\tusecs += ((750000 % runtime->rate) * runtime->period_size) /\r\n\t\truntime->rate;",
+        ]
+        hooked = False
+        for target in target_variants:
+            if target not in content:
+                continue
+            replacement = (
+                target
+                + "\n"
+                + "\t/* houji low-latency ALSA PM-QoS deadline: sub-5ms periods\n"
+                + "\t * vote a tighter 50% deadline so CPU frequency transitions\n"
+                + "\t * cannot starve the refill path into an underrun. */\n"
+                + "\tif (usecs < 3750) {\n"
+                + "\t\tusecs = (500000 / runtime->rate) * runtime->period_size;\n"
+                + "\t\tusecs += ((500000 % runtime->rate) * runtime->period_size) /\n"
+                + "\t\t\truntime->rate;\n"
+                + "\t}"
+            )
+            content = content.replace(target, replacement, 1)
+            hooked = True
+            break
+
+        if not hooked:
+            print(f"[-] Warning: period_to_usecs() computation not found in {path}")
+            return
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: sub-5ms ALSA periods vote 50% PM-QoS deadline")
+        return
+
+    print("[-] Warning: sound/core/pcm_native.c not found in candidate paths")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -3607,6 +3857,7 @@ def main():
     tune_bypass_charging()
     tune_selinux_enforce_stealth()
     tune_schedutil_iowait()
+    tune_schedutil_down_rate_limit()
     tune_armv9_compiler_flags()
     verify_ksu_vfs_stat_symbols()
     tune_kgsl_bus_scaling()
@@ -3616,6 +3867,7 @@ def main():
     tune_dsi_psr_power_collapse()
     tune_avc_log_silencing()
     tune_hide_proc_modules()
+    tune_susfs_isolated_mountinfo()
     tune_cpuidle_lpm()
     tune_slub_allocator()
     guard_display_brightness_flicker()
@@ -3627,6 +3879,7 @@ def main():
     tune_zsmalloc_compaction()
     tune_af_unix_root_socket_stealth()
     tune_fastrpc_pm_qos()
+    tune_alsa_pcm_lowlatency()
     tune_thp_madvise_defconfig()
     tune_tcp_fastopen()
     tune_eas_capacity_margin()
@@ -3645,6 +3898,7 @@ def main():
     tune_suid_dumpable_enforcement()
     tune_proactive_compaction()
     tune_psi_lmkd_headroom()
+    tune_vfs_cache_pressure()
     tune_thinlto_cache()
     print("[+] Xiaomi 14 performance & stealth tuning complete.")
 
