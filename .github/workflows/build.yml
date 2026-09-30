@@ -96,7 +96,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     concurrency:
-      group: build-${{ inputs.root_flavor }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}
+      # Must include every input that varies across matrix legs. Without
+      # sublevel/variant/page_size, several distinct builds collide on one key
+      # and, with cancel-in-progress: false, queue behind each other instead of
+      # running in parallel — one kernel compiles at a time.
+      group: build-${{ inputs.root_flavor }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sublevel }}-${{ inputs.os_patch_level }}-${{ inputs.variant }}${{ inputs.page_size }}
       cancel-in-progress: false
     steps:
     - name: Checkout Repository
@@ -739,28 +743,45 @@ jobs:
           local page=1
           local match=""
           local page_file
+          local attempt
           page_file="$(mktemp)"
 
-          # Page through the artifacts API, checking each page for the exact
-          # artifact name. Uses a temp file for jq input (not argv) so large
-          # artifact lists can't exceed the OS argument-length limit.
-          while :; do
-            curl --fail --silent --show-error --location \
-              --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
-              --header "Authorization: Bearer ***" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "${artifacts_api}&page=${page}" -o "$page_file"
+          # GitHub indexes an artifact asynchronously: the upload step can
+          # report "successfully finalized" and still not have the artifact in
+          # the run's list for a second or two. Retry the whole lookup before
+          # calling it missing, otherwise a just-uploaded artifact reads as
+          # absent and fails the step.
+          for attempt in 1 2 3 4 5 6; do
+            page=1
+            match=""
 
-            match="$(jq -r --arg name "$artifact_name" \
-              '[.artifacts[] | select(.name == $name and .expired == false)] | .[0]
-               | if . == null then "" else (.archive_download_url + "\t" + .digest) end' \
-              "$page_file")"
+            # Page through the artifacts API, checking each page for the exact
+            # artifact name. Uses a temp file for jq input (not argv) so large
+            # artifact lists can't exceed the OS argument-length limit.
+            while :; do
+              curl --fail --silent --show-error --location \
+                --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "${artifacts_api}&page=${page}" -o "$page_file"
 
-            items="$(jq '(.artifacts | length) // 0' "$page_file")"
-            if [ "$items" -lt 100 ] || [ -n "$match" ]; then
+              match="$(jq -r --arg name "$artifact_name" \
+                '[.artifacts[] | select(.name == $name and .expired == false)] | .[0]
+                 | if . == null then "" else (.archive_download_url + "\t" + .digest) end' \
+                "$page_file")"
+
+              items="$(jq '(.artifacts | length) // 0' "$page_file")"
+              if [ "$items" -lt 100 ] || [ -n "$match" ]; then
+                break
+              fi
+              page=$((page + 1))
+            done
+
+            if [ -n "$match" ]; then
               break
             fi
-            page=$((page + 1))
+            echo "  artifact '$artifact_name' not listed yet (attempt ${attempt}/6); re-querying in 10s" >&2
+            sleep 10
           done
 
           rm -f "$page_file"
