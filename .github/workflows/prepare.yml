@@ -52,12 +52,17 @@ on:
         type: string
         default: ""
       brand_name:
-        description: "Kernel branding text appended to the version string"
+        description: "Kernel branding text appended to the version string (empty = stock)"
         required: false
         type: string
         default: HyperHouji
-      bypass:
-        description: "Apply the kernel version-check bypass hack (disabled by default)"
+      keep_kmi:
+        description: "Keep stock KMI generation suffix in kernel version (fix #265)"
+        required: false
+        type: boolean
+        default: false
+      allow_version_mismatch:
+        description: "Force-load modules with mismatched symbol versions ( force check_version() to pass )"
         required: false
         type: boolean
         default: false
@@ -86,6 +91,11 @@ on:
         required: false
         type: string
         default: "generic"
+      page_size:
+        description: "ARM64 page size: 4k (default) or 16k"
+        required: false
+        type: string
+        default: "4k"
 
 jobs:
   generate-matrix:
@@ -170,6 +180,9 @@ jobs:
 
   build:
     needs: generate-matrix
+    concurrency:
+      group: prepare-${{ inputs.root_flavor }}-${{ matrix.version }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
@@ -191,8 +204,10 @@ jobs:
       anykernel3_commit: ${{ inputs.anykernel3_commit }}
       droidspaces_commit: ${{ inputs.droidspaces_commit }}
       brand_name: ${{ inputs.brand_name }}
-      bypass: ${{ inputs.bypass }}
+      keep_kmi: ${{ inputs.keep_kmi }}
+      allow_version_mismatch: ${{ inputs.allow_version_mismatch }}
       use_cache: ${{ inputs.use_cache }}
       lto: ${{ inputs.lto }}
       arm_tune: ${{ inputs.arm_tune }}
+      page_size: ${{ inputs.page_size }}
     secrets: inherit

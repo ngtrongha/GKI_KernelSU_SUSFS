@@ -137,6 +137,13 @@ runs:
           rm -rf "$PAHOLE_SRC"
           sleep 5
         done
+        # Without this, exhausting all attempts falls through to cmake against
+        # a directory that does not exist, and a network outage is reported as
+        # a cmake failure.
+        if [ ! -d "$PAHOLE_SRC/.git" ]; then
+          echo "dwarves clone failed after 5 attempts." >&2
+          exit 1
+        fi
         mkdir -p "$PAHOLE_SRC/build"
         cd "$PAHOLE_SRC/build"
         cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release .. >/dev/null
