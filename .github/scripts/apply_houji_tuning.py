@@ -56,7 +56,6 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - VFS metadata cache pressure default (vm.vfs_cache_pressure=70) for dentry retention (fs/dcache.c)
 - SUSFS mountinfo stealth for Android isolated processes (fs/proc_namespace.c SUSFS hooks)
 - ALSA low-latency PM-QoS deadline tightening against DVFS underruns (sound/core/pcm_native.c)
-- Clang -fno-plt direct branches without PLT stubs (arch/arm64/Makefile)
 - F2FS 64KB discard granularity default for UFS 4.0 (fs/f2fs/f2fs.h)
 - 80ms frequency boost on the A720 cluster at display wake-up (drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c)
 - SUSFS VFS hook fast-path verification against timing side-channels (fs/susfs.c)
@@ -3847,45 +3846,6 @@ def tune_alsa_pcm_lowlatency():
     print("[-] Warning: sound/core/pcm_native.c not found in candidate paths")
 
 
-def tune_clang_fno_plt():
-    """Append -fno-plt to KBUILD_CFLAGS for Clang direct branches.
-
-    Eliminates PLT jump-table overhead on Cortex-X4/A720 by emitting
-    direct branches. Guarded to Clang via cc-option so other compilers
-    and older Clang are unaffected; the statically-linked kernel needs
-    no PLT indirection.
-    """
-    makefile_paths = [
-        os.path.join("arch", "arm64", "Makefile"),
-        os.path.join("common", "arch", "arm64", "Makefile"),
-    ]
-
-    for makefile_path in makefile_paths:
-        if not os.path.isfile(makefile_path):
-            continue
-
-        with open(makefile_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        if "-fno-plt" in content:
-            print(f"[*] -fno-plt already present in {makefile_path}")
-            return
-
-        plt_block = (
-            "\n# houji -fno-plt: direct branches without PLT stubs (Clang/LLVM)\n"
-            "ifeq ($(CONFIG_CC_IS_CLANG),y)\n"
-            "KBUILD_CFLAGS += $(call cc-option,-fno-plt)\n"
-            "endif\n"
-        )
-        content += plt_block
-        with open(makefile_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"[+] Tuned {makefile_path}: -fno-plt appended for Clang builds")
-        return
-
-    print("[-] Warning: arch/arm64/Makefile not found in candidate paths")
-
-
 def tune_f2fs_discard_granularity():
     """Ensure F2FS 64KB discard granularity default for UFS 4.0.
 
@@ -4176,7 +4136,6 @@ def main():
     tune_schedutil_iowait()
     tune_schedutil_down_rate_limit()
     tune_armv9_compiler_flags()
-    tune_clang_fno_plt()
     verify_ksu_vfs_stat_symbols()
     tune_kgsl_bus_scaling()
     tune_cpu_memlat_devfreq()
