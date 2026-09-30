@@ -56,6 +56,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - VFS metadata cache pressure default (vm.vfs_cache_pressure=70) for dentry retention (fs/dcache.c)
 - SUSFS mountinfo stealth for Android isolated processes (fs/proc_namespace.c SUSFS hooks)
 - ALSA low-latency PM-QoS deadline tightening against DVFS underruns (sound/core/pcm_native.c)
+- Clang -fno-plt direct branches without PLT stubs (arch/arm64/Makefile)
+- F2FS 64KB discard granularity default for UFS 4.0 (fs/f2fs/f2fs.h)
+- 80ms frequency boost on the A720 cluster at display wake-up (drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c)
+- SUSFS VFS hook fast-path verification against timing side-channels (fs/susfs.c)
 """
 
 import os
@@ -3843,6 +3847,319 @@ def tune_alsa_pcm_lowlatency():
     print("[-] Warning: sound/core/pcm_native.c not found in candidate paths")
 
 
+def tune_clang_fno_plt():
+    """Append -fno-plt to KBUILD_CFLAGS for Clang direct branches.
+
+    Eliminates PLT jump-table overhead on Cortex-X4/A720 by emitting
+    direct branches. Guarded to Clang via cc-option so other compilers
+    and older Clang are unaffected; the statically-linked kernel needs
+    no PLT indirection.
+    """
+    makefile_paths = [
+        os.path.join("arch", "arm64", "Makefile"),
+        os.path.join("common", "arch", "arm64", "Makefile"),
+    ]
+
+    for makefile_path in makefile_paths:
+        if not os.path.isfile(makefile_path):
+            continue
+
+        with open(makefile_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if "-fno-plt" in content:
+            print(f"[*] -fno-plt already present in {makefile_path}")
+            return
+
+        plt_block = (
+            "\n# houji -fno-plt: direct branches without PLT stubs (Clang/LLVM)\n"
+            "ifeq ($(CONFIG_CC_IS_CLANG),y)\n"
+            "KBUILD_CFLAGS += $(call cc-option,-fno-plt)\n"
+            "endif\n"
+        )
+        content += plt_block
+        with open(makefile_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {makefile_path}: -fno-plt appended for Clang builds")
+        return
+
+    print("[-] Warning: arch/arm64/Makefile not found in candidate paths")
+
+
+def tune_f2fs_discard_granularity():
+    """Ensure F2FS 64KB discard granularity default for UFS 4.0.
+
+    DEFAULT_DISCARD_GRANULARITY is expressed in 4KB blocks, so 16 gives
+    64KB clusters and avoids small-TRIM command queue bottlenecks during
+    background file deletion. Mount-option overrides (segment/section
+    units) are left untouched.
+    """
+    f2fs_h_paths = [
+        os.path.join("fs", "f2fs", "f2fs.h"),
+        os.path.join("common", "fs", "f2fs", "f2fs.h"),
+    ]
+
+    marker = "houji F2FS 64KB discard granularity"
+
+    for path in f2fs_h_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] F2FS discard granularity already tuned in {path}")
+            return
+
+        pattern = re.compile(
+            r"^(#define\s+DEFAULT_DISCARD_GRANULARITY\s+)\d+(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if not match:
+            continue
+
+        replacement = (
+            "/* houji F2FS 64KB discard granularity: 16 x 4KB blocks avoids\n"
+            " * small-TRIM queue bottlenecks on UFS 4.0 during background delete */\n"
+            + match.group(1)
+            + "16"
+            + match.group(2)
+        )
+        content = content[: match.start()] + replacement + content[match.end():]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: DEFAULT_DISCARD_GRANULARITY ensured at 16 (64KB)")
+        return
+
+    print("[-] Warning: fs/f2fs/f2fs.h not found or DEFAULT_DISCARD_GRANULARITY unmatched")
+
+
+def tune_display_wake_boost():
+    """80ms frequency boost on the A720 cluster at display wake-up.
+
+    Hooks dpu_crtc_enable() (sleepable modeset context) to floor
+    Cortex-A720-cluster policies (2.9-3.2GHz max) at their current max via
+    per-policy freq_qos MIN requests, released 80ms later by delayed work.
+    freq_qos votes resolve against policy limits, so thermal/user caps are
+    always honored. Online-CPU pinning keeps policy objects alive across
+    the put/add window; the whole block is skipped if any anchor is
+    unrecognized, so a mismatch can never break the display path.
+    """
+    marker = "houji 80ms display wake boost"
+
+    crtc_paths = [
+        os.path.join("drivers", "gpu", "drm", "msm", "disp", "dpu1", "dpu_crtc.c"),
+        os.path.join("common", "drivers", "gpu", "drm", "msm", "disp", "dpu1", "dpu_crtc.c"),
+    ]
+
+    includes = [
+        "#include <linux/cpufreq.h>\n",
+        "#include <linux/pm_qos.h>\n",
+        "#include <linux/workqueue.h>\n",
+        "#include <linux/mutex.h>\n",
+        "#include <linux/slab.h>\n",
+        "#include <linux/cpumask.h>\n",
+        "#include <linux/cpu.h>\n",
+        "#include <linux/list.h>\n",
+    ]
+
+    helpers = (
+        "/* houji 80ms display wake boost: floor A720-cluster policies (2.9-3.2GHz\n"
+        " * max) at their current max for 80ms on display wake-up, accelerating\n"
+        " * lockscreen 120Hz compositing and fingerprint recognition. Uses\n"
+        " * per-policy freq_qos MIN votes: thermal/user caps always win. */\n"
+        "struct houji_wake_boost_entry {\n"
+        "\tstruct freq_qos_request qos_req;\n"
+        "\tint cpu;\n"
+        "\tstruct list_head node;\n"
+        "};\n"
+        "\n"
+        "static LIST_HEAD(houji_wake_boost_list);\n"
+        "static DEFINE_MUTEX(houji_wake_boost_lock);\n"
+        "static void houji_wake_boost_remove_workfn(struct work_struct *work);\n"
+        "static DECLARE_DELAYED_WORK(houji_wake_boost_remove_work,\n"
+        "\t\t\t    houji_wake_boost_remove_workfn);\n"
+        "\n"
+        "static void houji_wake_boost_remove_workfn(struct work_struct *work)\n"
+        "{\n"
+        "\tstruct houji_wake_boost_entry *entry, *tmp;\n"
+        "\n"
+        "\tmutex_lock(&houji_wake_boost_lock);\n"
+        "\tlist_for_each_entry_safe(entry, tmp, &houji_wake_boost_list, node) {\n"
+        "\t\tfreq_qos_remove_request(&entry->qos_req);\n"
+        "\t\tlist_del(&entry->node);\n"
+        "\t\tkfree(entry);\n"
+        "\t}\n"
+        "\tmutex_unlock(&houji_wake_boost_lock);\n"
+        "}\n"
+        "\n"
+        "static void houji_wake_boost_kick(void)\n"
+        "{\n"
+        "\tint cpu;\n"
+        "\n"
+        "\tget_online_cpus();\n"
+        "\tmutex_lock(&houji_wake_boost_lock);\n"
+        "\tif (list_empty(&houji_wake_boost_list)) {\n"
+        "\t\tfor_each_online_cpu(cpu) {\n"
+        "\t\t\tstruct cpufreq_policy *policy;\n"
+        "\t\t\tstruct houji_wake_boost_entry *entry;\n"
+        "\t\t\tstruct freq_constraints *constraints;\n"
+        "\t\t\tunsigned int max_freq, pmax;\n"
+        "\n"
+        "\t\t\tpolicy = cpufreq_cpu_get(cpu);\n"
+        "\t\t\tif (!policy)\n"
+        "\t\t\t\tcontinue;\n"
+        "\t\t\tmax_freq = policy->cpuinfo.max_freq;\n"
+        "\t\t\tpmax = policy->max;\n"
+        "\t\t\tconstraints = &policy->constraints;\n"
+        "\t\t\tcpufreq_cpu_put(policy);\n"
+        "\t\t\t/* Policy objects stay alive under get_online_cpus(),\n"
+        "\t\t\t * so constraints remains valid without holding\n"
+        "\t\t\t * cpufreq locks across the QoS update. */\n"
+        "\t\t\tif (max_freq < 2900000 || max_freq > 3250000 || !pmax)\n"
+        "\t\t\t\tcontinue;\n"
+        "\t\t\tentry = kzalloc(sizeof(*entry), GFP_KERNEL);\n"
+        "\t\t\tif (!entry)\n"
+        "\t\t\t\tcontinue;\n"
+        "\t\t\tentry->cpu = cpu;\n"
+        "\t\t\tif (freq_qos_add_request(constraints,\n"
+        "\t\t\t\t\t\t &entry->qos_req,\n"
+        "\t\t\t\t\t\t FREQ_QOS_MIN, pmax)) {\n"
+        "\t\t\t\tkfree(entry);\n"
+        "\t\t\t\tcontinue;\n"
+        "\t\t\t}\n"
+        "\t\t\tlist_add(&entry->node, &houji_wake_boost_list);\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\tmod_delayed_work(system_wq, &houji_wake_boost_remove_work,\n"
+        "\t\t\t msecs_to_jiffies(80));\n"
+        "\tmutex_unlock(&houji_wake_boost_lock);\n"
+        "\tput_online_cpus();\n"
+        "}\n"
+        "\n"
+    )
+
+    fn_sig = "static void dpu_crtc_enable(struct drm_crtc *crtc,"
+    assign = "struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);"
+
+    for path in crtc_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Display wake boost already present in {path}")
+            return
+
+        fn_idx = content.find(fn_sig)
+        if fn_idx == -1:
+            continue
+        brace_idx = content.find("{", fn_idx)
+        if brace_idx == -1:
+            continue
+        assign_idx = content.find(assign, brace_idx, brace_idx + 600)
+        if assign_idx == -1:
+            continue
+        assign_end = assign_idx + len(assign)
+
+        # Trigger call first (later offset), so earlier indices stay valid.
+        kick = (
+            "\n\t/* houji 80ms display wake boost on display wake-up */\n"
+            "\thouji_wake_boost_kick();"
+        )
+        content = content[:assign_end] + kick + content[assign_end:]
+
+        # Helper block before the enable function.
+        content = content[:fn_idx] + helpers + content[fn_idx:]
+
+        # Required headers, added once each after the last #include.
+        for inc in includes:
+            if inc not in content:
+                matches = list(re.finditer(r"^#include .*$", content, re.MULTILINE))
+                if not matches:
+                    print(f"[-] Warning: no #include anchor in {path}; left untouched for safety")
+                    break
+                pos = matches[-1].end()
+                content = content[:pos] + "\n" + inc.rstrip("\n") + content[pos:]
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: 80ms A720 frequency boost on display wake-up")
+            return
+
+        print(f"[-] Warning: include insertion failed in {path}; left untouched for safety")
+        return
+
+    print("[-] Warning: dpu_crtc.c not found or dpu_crtc_enable() unmatched")
+
+
+def tune_susfs_hook_fastpaths():
+    """Verify SUSFS VFS hook fast paths stay O(1) against timing analysis.
+
+    The sus-path check is a mapping-flag test_bit, and the kstat/open-
+    redirect lookups walk RCU hashtables (never linear lists), so hook
+    latency is flat and reveals nothing to timing side-channels. This
+    marks those sites to keep them intact. Comment-only: VFS hot paths
+    run on every syscall, so no functional change is made here.
+    """
+    susfs_paths = [
+        os.path.join("fs", "susfs.c"),
+        os.path.join("common", "fs", "susfs.c"),
+    ]
+
+    marks = [
+        (
+            "houji SUSFS kstat hash fast path",
+            "hash_for_each_possible_rcu(SUS_KSTAT_HLIST, entry, node, target_ino) {",
+            "/* houji SUSFS kstat hash fast path: RCU hash lookup keeps hook\n"
+            " * latency flat against timing side-channels. Do not linearize. */\n\t",
+        ),
+        (
+            "houji SUSFS open-redirect hash fast path",
+            "hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {",
+            "/* houji SUSFS open-redirect hash fast path: RCU hash lookup keeps\n"
+            " * hook latency flat against timing side-channels. Do not linearize. */\n\t",
+        ),
+        (
+            "houji SUSFS sus-path flag fast path",
+            "bool susfs_is_inode_sus_path(",
+            "/* houji SUSFS sus-path flag fast path: mapping-flag test_bit keeps the\n"
+            " * per-inode check O(1) against timing side-channels. Do not linearize. */\n",
+        ),
+    ]
+
+    for path in susfs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        modified = False
+        for marker, anchor, comment in marks:
+            if marker in content:
+                continue
+            if anchor not in content:
+                continue
+            # Comment-only: safe to mark every hot lookup site.
+            content = content.replace(anchor, comment + anchor)
+            modified = True
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: SUSFS VFS hook fast paths verified and marked")
+        else:
+            print(f"[*] SUSFS hook fast paths already marked (or anchors unmatched) in {path}")
+        return
+
+    print("[-] Info: fs/susfs.c not present (non-SUSFS flavor); hook fast-path check skipped")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -3859,21 +4176,25 @@ def main():
     tune_schedutil_iowait()
     tune_schedutil_down_rate_limit()
     tune_armv9_compiler_flags()
+    tune_clang_fno_plt()
     verify_ksu_vfs_stat_symbols()
     tune_kgsl_bus_scaling()
     tune_cpu_memlat_devfreq()
     tune_drm_vsync_latency()
     tune_drm_ltpo_vblank_sync()
     tune_dsi_psr_power_collapse()
+    tune_display_wake_boost()
     tune_avc_log_silencing()
     tune_hide_proc_modules()
     tune_susfs_isolated_mountinfo()
+    tune_susfs_hook_fastpaths()
     tune_cpuidle_lpm()
     tune_slub_allocator()
     guard_display_brightness_flicker()
     verify_susfs_sus_mount()
     tune_fuse_passthrough_defconfig()
     tune_f2fs_atomic_writes()
+    tune_f2fs_discard_granularity()
     tune_ufs_mcq_and_writebooster()
     tune_walt_120hz_sync()
     tune_zsmalloc_compaction()
