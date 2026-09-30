@@ -1,6 +1,17 @@
+# Testing folders
 testing/
 AIO-REJ/
+# Kernel source code
 kernel-manifests/
 kernels/
+# BBR source code
 bbr/
+
+# Git ignore
+.gitignore
+.gitignore-work
+.gitea/
+.agent/
+.agents/
+# Python cache
 __pycache__/
