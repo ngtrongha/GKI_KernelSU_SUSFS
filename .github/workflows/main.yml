@@ -379,7 +379,7 @@ jobs:
               echo "root_commit=" >> "$GITHUB_OUTPUT"
               ROOT_MATRIX='[{"root_flavor":"none","variant":"NoRoot","root_commit":""}]'
               ;;
-            "All (KernelSU-Next + KernelSU + ReSukiSU)")
+            All|"All (KernelSU-Next + KernelSU + ReSukiSU)")
               # Fan out to all three root variants, each with its pinned commit.
               ROOT_MATRIX="[$(mk_entry next KernelSU-Next "$NEXT_COMMIT"),$(mk_entry kernelsu KernelSU "$KERNELSU_COMMIT"),$(mk_entry resukisu ReSukiSU "$RESUKISU_COMMIT")]"
               echo "root_flavor=" >> "$GITHUB_OUTPUT"
