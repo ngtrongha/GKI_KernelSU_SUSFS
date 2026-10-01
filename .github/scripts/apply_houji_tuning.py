@@ -59,6 +59,10 @@ apply_houji_tuning.py: Apply kernel performance tuning patches for Xiaomi 14 (ho
 - F2FS 64KB discard granularity default for UFS 4.0 (fs/f2fs/f2fs.h)
 - 80ms frequency boost on the A720 cluster at display wake-up (drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c)
 - SUSFS VFS hook fast-path verification against timing side-channels (fs/susfs.c)
+- Skip compaction on unevictable pages (vm.compact_unevictable_allowed=0) (mm/compaction.c)
+- Adreno 750 GMU idle hysteresis tuned to 15ms (drivers/gpu/msm/kgsl_gmu.c, kgsl_pwrctrl.c)
+- VFS link security hardening (fs.protected_symlinks=1, fs.protected_hardlinks=1) (fs/namei.c)
+- SUSFS stealth: conceal /sys/kernel/tracing and /sys/kernel/debug/tracing from unprivileged apps (fs/susfs.c)
 """
 
 import os
@@ -1913,6 +1917,8 @@ fi
 # Apply VFS File Protection Sysctls
 sysctl -w fs.protected_regular=2 2>/dev/null || true
 sysctl -w fs.protected_fifos=2 2>/dev/null || true
+sysctl -w fs.protected_symlinks=1 2>/dev/null || true
+sysctl -w fs.protected_hardlinks=1 2>/dev/null || true
 
 # Apply houji latency, OOM and core dump hardening sysctls
 sysctl -w net.ipv4.tcp_notsent_lowat=16384 2>/dev/null || true
@@ -1920,12 +1926,18 @@ sysctl -w vm.oom_dump_tasks=0 2>/dev/null || true
 sysctl -w fs.suid_dumpable=0 2>/dev/null || true
 sysctl -w vm.compaction_proactiveness=20 2>/dev/null || true
 sysctl -w vm.vfs_cache_pressure=70 2>/dev/null || true
+sysctl -w vm.compact_unevictable_allowed=0 2>/dev/null || true
 
 
 # Apply Adreno 750 devfreq governor tuning (5ms sampling & faster ramp-down)
 for d in /sys/class/devfreq/*kgsl-3d0* /sys/class/devfreq/*adreno*; do
     [ -f "$d/polling_interval" ] && echo 5 > "$d/polling_interval" 2>/dev/null || true
     [ -f "$d/msm-adreno-tz/target_loads" ] && echo "65 80:70 90:80" > "$d/msm-adreno-tz/target_loads" 2>/dev/null || true
+done
+
+# Tune Adreno 750 GMU idle hysteresis to 15ms (prevent rapid power collapse during 120Hz 8.33ms frames)
+for g in /sys/class/kgsl/kgsl-3d0/idle_timer /sys/class/kgsl/kgsl-3d0/gmu_idle_timer /sys/class/kgsl/kgsl-3d0/pwrscale/idle_timer; do
+    [ -f "$g" ] && echo 15 > "$g" 2>/dev/null || true
 done
 
 ui_print " "
@@ -2551,11 +2563,13 @@ def tune_adreno_tz_governor():
 
 
 def tune_vfs_file_protection():
-    """Enable VFS file protection sysctls by default (fs.protected_regular=2, fs.protected_fifos=2).
+    """Enable VFS file and link protection sysctls by default.
+    (fs.protected_regular=2, fs.protected_fifos=2, fs.protected_symlinks=1, fs.protected_hardlinks=1)
 
-    Prevents unauthorized modification/creation of regular files and FIFOs in world-writable sticky directories.
+    Prevents unauthorized modification/creation of regular files and FIFOs in world-writable sticky directories,
+    and hardens symlinks/hardlinks against spoofing and unprivileged link traversal attacks.
     """
-    marker = "SM8650 VFS file protection sysctls: protected_regular=2, protected_fifos=2"
+    marker = "SM8650 VFS file protection sysctls: protected_regular=2, protected_fifos=2, protected_symlinks=1, protected_hardlinks=1"
 
     namei_paths = [
         os.path.join("fs", "namei.c"),
@@ -2608,10 +2622,44 @@ def tune_vfs_file_protection():
                 modified = True
                 break
 
+        # sysctl_protected_symlinks
+        symlink_targets = [
+            "int sysctl_protected_symlinks __read_mostly = 0;",
+            "int sysctl_protected_symlinks __read_mostly;",
+            "int sysctl_protected_symlinks = 0;",
+            "int sysctl_protected_symlinks;",
+        ]
+        for st in symlink_targets:
+            if st in content:
+                content = content.replace(
+                    st,
+                    f"/* {marker} */\nint sysctl_protected_symlinks __read_mostly = 1;",
+                    1
+                )
+                modified = True
+                break
+
+        # sysctl_protected_hardlinks
+        hardlink_targets = [
+            "int sysctl_protected_hardlinks __read_mostly = 0;",
+            "int sysctl_protected_hardlinks __read_mostly;",
+            "int sysctl_protected_hardlinks = 0;",
+            "int sysctl_protected_hardlinks;",
+        ]
+        for ht in hardlink_targets:
+            if ht in content:
+                content = content.replace(
+                    ht,
+                    f"/* {marker} */\nint sysctl_protected_hardlinks __read_mostly = 1;",
+                    1
+                )
+                modified = True
+                break
+
         if modified:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            print(f"[+] Tuned {path}: fs.protected_regular=2 and fs.protected_fifos=2 initialized by default")
+            print(f"[+] Tuned {path}: VFS file & link protection sysctls initialized by default")
 
 
 def tune_thinlto_cache():
@@ -4120,6 +4168,225 @@ def tune_susfs_hook_fastpaths():
     print("[-] Info: fs/susfs.c not present (non-SUSFS flavor); hook fast-path check skipped")
 
 
+def tune_compact_unevictable():
+    """Disable compaction on unevictable pages by default (vm.compact_unevictable_allowed=0).
+
+    Eliminates wasteful compaction scanning cycles over mlocked memory regions.
+    """
+    compact_paths = [
+        os.path.join("mm", "compaction.c"),
+        os.path.join("common", "mm", "compaction.c"),
+    ]
+
+    marker = "houji compact_unevictable_allowed=0"
+
+    for path in compact_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] compact_unevictable_allowed already tuned in {path}")
+            return
+
+        pattern = re.compile(
+            r"^([ \t]*)((?:unsigned\s+)?int\s+(?:__read_mostly\s+)?sysctl_compact_unevictable_allowed\b[^=\r\n]*=\s*)\d+;(\r?)$",
+            re.MULTILINE,
+        )
+        match = pattern.search(content)
+        if match:
+            indent, decl, eol = match.group(1), match.group(2), match.group(3)
+            replacement = (
+                f"{indent}/* {marker}: eliminate wasteful compaction scanning on mlocked memory */{eol}\n"
+                f"{indent}{decl}0;{eol}"
+            )
+            content = content[: match.start()] + replacement + content[match.end():]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: vm.compact_unevictable_allowed default set to 0")
+            return
+
+        targets = [
+            "int sysctl_compact_unevictable_allowed __read_mostly = 1;",
+            "int sysctl_compact_unevictable_allowed __read_mostly;",
+            "int sysctl_compact_unevictable_allowed = 1;",
+            "int sysctl_compact_unevictable_allowed;",
+        ]
+        for t in targets:
+            if t in content:
+                content = content.replace(
+                    t,
+                    f"/* {marker} */\nint sysctl_compact_unevictable_allowed __read_mostly = 0;",
+                    1,
+                )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"[+] Tuned {path}: vm.compact_unevictable_allowed default set to 0")
+                return
+
+    print("[-] Warning: mm/compaction.c not found or sysctl_compact_unevictable_allowed unmatched")
+
+
+def tune_gmu_idle_hysteresis():
+    """Tune Adreno 750 GMU idle hysteresis to 15ms.
+
+    Prevents rapid power-collapse/wake cycles between 120Hz display refresh
+    intervals (8.33ms) to reduce wake-up power spikes and heat.
+    """
+    marker = "houji GMU idle hysteresis (15ms for 120Hz)"
+    gmu_candidates = [
+        os.path.join("drivers", "gpu", "msm", "kgsl_gmu.c"),
+        os.path.join("common", "drivers", "gpu", "msm", "kgsl_gmu.c"),
+        os.path.join("drivers", "gpu", "msm", "kgsl_gmu.h"),
+        os.path.join("common", "drivers", "gpu", "msm", "kgsl_gmu.h"),
+        os.path.join("drivers", "gpu", "msm", "kgsl_pwrctrl.c"),
+        os.path.join("common", "drivers", "gpu", "msm", "kgsl_pwrctrl.c"),
+    ]
+
+    found = False
+    for path in gmu_candidates:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] GMU idle hysteresis already tuned in {path}")
+            found = True
+            continue
+
+        modified = False
+
+        # 1. Macro overrides for GMU idle timeout
+        for macro in ("GMU_IDLE_TIMEOUT", "GMU_PWR_COLLAPSE_TIMEOUT", "GMU_IDLE_TIMER"):
+            if f"#define {macro}" in content:
+                content = re.sub(
+                    rf"#define\s+{macro}\s+\d+",
+                    f"/* {marker} */\n#define {macro} 15",
+                    content,
+                    count=1,
+                )
+                modified = True
+
+        # 2. Variable assignments in kgsl_gmu.c / kgsl_pwrctrl.c
+        idle_targets = [
+            "gmu->idle_timeout = 10;",
+            "gmu->idle_timeout = 5;",
+            "pwr->interval_timeout = 10;",
+            "pwr->interval_timeout = 5;",
+            "pwr->interval_timeout = msecs_to_jiffies(10);",
+            "pwr->interval_timeout = msecs_to_jiffies(5);",
+        ]
+        for it in idle_targets:
+            if it in content:
+                content = content.replace(
+                    it,
+                    f"/* {marker} */\n" + it.replace("10", "15").replace("5", "15"),
+                    1,
+                )
+                modified = True
+
+        # 3. Hook into gmu_probe / kgsl_gmu_probe / gmu_start
+        probe_targets = [
+            "int gmu_probe(struct kgsl_device *device, struct platform_device *pdev)\n{",
+            "int gmu_probe(struct kgsl_device *device, struct platform_device *pdev)\r\n{",
+            "int kgsl_gmu_probe(struct kgsl_device *device, struct platform_device *pdev)\n{",
+            "int kgsl_gmu_probe(struct kgsl_device *device, struct platform_device *pdev)\r\n{",
+            "int gmu_start(struct kgsl_device *device)\n{",
+            "int gmu_start(struct kgsl_device *device)\r\n{",
+        ]
+        for pt in probe_targets:
+            if pt in content and marker not in content:
+                hook = (
+                    pt
+                    + f"\n\t/* {marker}: tune idle timer to 15ms for 120Hz frame pacing */\n"
+                    "\tif (device) {\n"
+                    "\t\tdevice->pwrctrl.interval_timeout = msecs_to_jiffies(15);\n"
+                    "\t}\n"
+                )
+                content = content.replace(pt, hook, 1)
+                modified = True
+                break
+
+        if modified:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"[+] Tuned {path}: Adreno 750 GMU idle hysteresis set to 15ms")
+            found = True
+
+    if not found:
+        print("[-] Warning: kgsl_gmu.c / kgsl_pwrctrl.c not found in candidate paths")
+
+
+def tune_susfs_hide_tracing():
+    """Intercept /sys/kernel/tracing and /sys/kernel/debug/tracing for unprivileged apps.
+
+    Blocks non-root applications from inspecting kernel tracing filesystems to prevent
+    kprobe/tracepoint detection.
+    """
+    susfs_paths = [
+        os.path.join("fs", "susfs.c"),
+        os.path.join("common", "fs", "susfs.c"),
+    ]
+
+    marker = "houji SUSFS tracing stealth"
+
+    for path in susfs_paths:
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        if marker in content:
+            print(f"[*] Tracing stealth already present in {path}")
+            return
+
+        fn_idx = content.find("bool susfs_is_inode_sus_path(")
+        if fn_idx == -1:
+            print(f"[-] Warning: susfs_is_inode_sus_path not found in {path}")
+            continue
+
+        anchor = "if (!susfs_is_current_proc_umounted_app())"
+        anc_idx = content.find(anchor, fn_idx)
+        if anc_idx == -1:
+            print(f"[-] Warning: anchor not found in susfs_is_inode_sus_path in {path}")
+            continue
+
+        hook = (
+            f"/* {marker}: block non-root applications from inspecting\n"
+            "\t * /sys/kernel/tracing and /sys/kernel/debug/tracing to prevent kprobe/tracepoint detection */\n"
+            "\tif (inode && !uid_eq(current_uid(), GLOBAL_ROOT_UID) &&\n"
+            "\t    (susfs_is_current_proc_umounted_app() || !susfs_is_current_ksu_domain())) {\n"
+            "\t\tif (inode->i_sb && (inode->i_sb->s_magic == 0x74726163 /* TRACEFS_MAGIC */ ||\n"
+            "\t\t\t\t    inode->i_sb->s_magic == 0x64626720 /* DEBUGFS_MAGIC */)) {\n"
+            "\t\t\treturn true;\n"
+            "\t\t}\n"
+            "\t\tif (inode->i_sb && inode->i_sb->s_magic == 0x62656572 /* SYSFS_MAGIC */) {\n"
+            "\t\t\tstruct dentry *alias = d_find_alias(inode);\n"
+            "\t\t\tif (alias) {\n"
+            "\t\t\t\tbool is_tracing = !strcmp(alias->d_name.name, \"tracing\");\n"
+            "\t\t\t\tdput(alias);\n"
+            "\t\t\t\tif (is_tracing)\n"
+            "\t\t\t\t\treturn true;\n"
+            "\t\t\t}\n"
+            "\t\t}\n"
+            "\t}\n\n\t"
+        )
+
+        content = content[:anc_idx] + hook + content[anc_idx:]
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[+] Tuned {path}: /sys/kernel/tracing concealment for unprivileged UIDs applied")
+        return
+
+    print("[-] Info: fs/susfs.c not present (non-SUSFS flavor); tracing stealth check skipped")
+
+
 def main():
     print("[*] Applying Xiaomi 14 (houji) GKI 6.1 performance & stealth tuning...")
     tune_bore_scheduler()
@@ -4147,6 +4414,7 @@ def main():
     tune_hide_proc_modules()
     tune_susfs_isolated_mountinfo()
     tune_susfs_hook_fastpaths()
+    tune_susfs_hide_tracing()
     tune_cpuidle_lpm()
     tune_slub_allocator()
     guard_display_brightness_flicker()
@@ -4172,11 +4440,13 @@ def main():
     tune_wifi7_twt_power_saving()
     tune_zram_writeback()
     tune_adreno_tz_governor()
+    tune_gmu_idle_hysteresis()
     tune_vfs_file_protection()
     tune_tcp_notsent_lowat()
     tune_oom_dump_tasks()
     tune_suid_dumpable_enforcement()
     tune_proactive_compaction()
+    tune_compact_unevictable()
     tune_psi_lmkd_headroom()
     tune_vfs_cache_pressure()
     tune_thinlto_cache()
