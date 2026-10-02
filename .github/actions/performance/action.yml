@@ -77,11 +77,11 @@ runs:
         fi
 
         # Tune watermark_scale_factor (10 -> 100 for smoother kswapd wakeups and zero direct reclaim spikes)
-        # and disable watermark_boost_factor (0 to prevent memory churn)
+        # and restore watermark_boost_factor (15000 for early kswapd background reclaim)
         if [ -f "mm/page_alloc.c" ]; then
           sed -i 's/int watermark_scale_factor = 10;/int watermark_scale_factor = 100;/g' mm/page_alloc.c
-          sed -i 's/int watermark_boost_factor __read_mostly = 15000;/int watermark_boost_factor __read_mostly = 0;/g' mm/page_alloc.c
-          echo "[+] Tuned mm/page_alloc.c: watermark_scale_factor = 100, watermark_boost_factor = 0"
+          sed -i 's/int watermark_boost_factor __read_mostly = 0;/int watermark_boost_factor __read_mostly = 15000;/g' mm/page_alloc.c
+          echo "[+] Tuned mm/page_alloc.c: watermark_scale_factor = 100, watermark_boost_factor = 15000"
         fi
 
 
