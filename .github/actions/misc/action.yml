@@ -29,4 +29,15 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
+          CONFIG_LRU_GEN_ENABLED=y
+          CONFIG_MQ_IOSCHED_DEADLINE=y
+          CONFIG_ZRAM_DEF_COMP_LZ4=y
+          CONFIG_ZRAM_WRITEBACK=y
+          CONFIG_ZRAM_MEMORY_TRACKING=y
+          CONFIG_F2FS_FS_COMPRESSION=y
+          CONFIG_EXFAT_FS=y
+          CONFIG_VFAT_FS=y
+          CONFIG_PSTORE=y
+          CONFIG_PSTORE_CONSOLE=y
+          CONFIG_PSTORE_RAM=y
           

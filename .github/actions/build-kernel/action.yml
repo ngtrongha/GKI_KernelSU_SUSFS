@@ -140,6 +140,46 @@ runs:
         fi
         echo "Page size verified: ${PAGE_SIZE}"
 
+    # Ported from GKID-Kernels (py/kmi-check-6.x.py): a CRC drift on any KMI
+    # symbol makes vendor modules refuse to load -> bootloop on devices like houji.
+    - name: 'Verify KMI Symbol CRCs'
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel
+      run: |
+        set -euo pipefail
+        STG=common/android/abi_gki_aarch64.stg
+        if [ ! -f "$STG" ]; then
+          echo "No $STG in this tree; KMI CRC check not applicable."
+          exit 0
+        fi
+        find_symvers() {
+          find bazel-bin/common/kernel_aarch64 /home/runner/out/dist /home/runner/out \
+            -maxdepth 1 -name vmlinux.symvers -type f 2>/dev/null | head -n1 || true
+        }
+        SYMVERS="$(find_symvers)"
+        if [ -z "$SYMVERS" ] && [ -x tools/bazel ]; then
+          # Same action as the Image build, so this is a cache hit, not a rebuild.
+          tools/bazel build --config=fast \
+            $([ "${{ inputs.page_size }}" = "16k" ] && echo --page_size=16k) \
+            --disk_cache=/home/runner/.cache/bazel \
+            //common:kernel_aarch64/vmlinux.symvers || true
+          SYMVERS="$(find_symvers)"
+        fi
+        if [ -z "$SYMVERS" ]; then
+          echo "::warning::vmlinux.symvers not found; KMI CRCs NOT verified - test boot carefully."
+          exit 0
+        fi
+        echo "Checking $SYMVERS against $STG"
+        if python3 "${{ github.workspace }}/.github/scripts/kmi_check.py" "$STG" "$SYMVERS"; then
+          echo "### KMI check: passed" >> "$GITHUB_STEP_SUMMARY"
+        elif [ "${{ inputs.allow_version_mismatch }}" = "true" ]; then
+          echo "::warning::KMI CRC mismatch; shipping only because allow_version_mismatch (force-load) is on. Boot is NOT guaranteed."
+          echo "### KMI check: mismatch (force-load bypass enabled)" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "::error::KMI CRC mismatch - this kernel would bootloop (vendor modules rejected). Fix the offending patch or re-run with allow_version_mismatch."
+          exit 1
+        fi
+
     - name: 'Gather Build Artifacts'
       shell: bash
       working-directory: ${{ github.workspace }}/kernel
