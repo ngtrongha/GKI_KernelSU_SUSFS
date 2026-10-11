@@ -1508,10 +1508,9 @@ jobs:
     - name: Download NoMount metamodule
       uses: actions/download-artifact@v7
       with:
-        path: release-assets
+        path: release-assets/NoMount-Metamodule
         pattern: '*NoMount-Metamodule'
         merge-multiple: false
-        if-no-files-found: ignore
 
     - name: Zip AnyKernel3 for Release
       run: |
@@ -1531,12 +1530,14 @@ jobs:
         set -e
         shopt -s nullglob
 
-        for dir in release-assets/*NoMount-Metamodule; do
-          zip_name="${dir}.zip"
+        for dir in release-assets/*NoMount-Metamodule release-assets/*NoMount-Metamodule/*NoMount-Metamodule; do
+          [ -d "$dir" ] || continue
+          zip_name="release-assets/NoMount-Metamodule.zip"
           rm -f "$zip_name"
           cd "$dir"
           zip -r -q -9 "../$(basename "$zip_name")" .
           cd - >/dev/null
+          break
         done
 
     - name: Verify NoMount metamodule zip
@@ -1876,7 +1877,7 @@ jobs:
       - name: Download NoMount metamodule
         uses: actions/download-artifact@v7
         with:
-          path: release-assets
+          path: release-assets/NoMount-Metamodule
           pattern: '*NoMount-Metamodule'
           merge-multiple: false
 
@@ -1884,7 +1885,8 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          for dir in release-assets/*-AnyKernel3 release-assets/*NoMount-Metamodule; do
+          for dir in release-assets/*-AnyKernel3 release-assets/*NoMount-Metamodule release-assets/*NoMount-Metamodule/*NoMount-Metamodule; do
+            [ -d "$dir" ] || continue
             zip_name="${dir}.zip"
             rm -f "$zip_name"
             (cd "$dir" && zip -r -q -9 "../$(basename "$zip_name")" .)
