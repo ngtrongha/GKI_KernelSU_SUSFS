@@ -237,37 +237,37 @@ jobs:
           }
 
           # Audited pins (from root-variants.yml). Used only when commit_mode=verified.
-          PIN_NOMOUNT="5a610db7649a59eb3e3d710653618d594941f8da"
-          PIN_KERNELSU="08a3b087e49227c8a6731c5f1114998b5e25255b"
-          PIN_RESUKISU="94dd3c93c2053a84fd752df6eb85db99b7d70ab8"
-          PIN_SUKISU_ULTRA="b20dee702035af09cb2ecb5f35443bbc1747f3e6"
+          PIN_NOMOUNT="fcaa6c4935d1eabcbb91e86521b61442bdff12e9"
+          PIN_KERNELSU="f895b80a3aad79948ba8074f53cf8f65a314d576"
+          PIN_RESUKISU="f6cb7e70c10ebde149f3121ae68b945514fd0801"
+          PIN_SUKISU_ULTRA="6c284e957feaa9a388a9f1c37dc4ec80d95e434b"
           declare -A PIN_SUSFS=(
-            [susfs_commit_android12_5_10]="9892175b4acec7ee844e113b8d02c0f4d12cdfac"
-            [susfs_commit_android13_5_10]="5326e21a7eb232f9e21debdd5164e99bee3d1e2f"
-            [susfs_commit_android13_5_15]="687d2d18d94cb2e3e72d1074778d58384d58e379"
-            [susfs_commit_android14_5_15]="6ba6ca79f85b8873b54573842093a9ae2df56cf9"
-            [susfs_commit_android14_6_1]="24743360ea08d98f6ad72b856851abed8de5854f"
+            [susfs_commit_android12_5_10]="13e7da018ddd41341b9d6ab1b279f4e712789d9e"
+            [susfs_commit_android13_5_10]="2837d10b68bacbd7f06758d301237e8f8b363adb"
+            [susfs_commit_android13_5_15]="138a6641afd25fb04f803361232c44ef2e033e61"
+            [susfs_commit_android14_5_15]="1f88baa37858183a45c62ad5aea315f27b3a8fc1"
+            [susfs_commit_android14_6_1]="17dc6b683b26e036242bfcfe86b33c5982590237"
             [susfs_commit_android15_6_6]="a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
             [susfs_commit_android16_6_12]="b213c54126fb243595ce7876e91d84d6e0861fec"
           )
           # ReSukiSU keeps its own SUSFS pin set (currently the shared values,
           # including 6.1 = 0ff93279). KernelSU's set above already diverges on 6.1.
           declare -A PIN_SUSFS_RESUKISU=(
-            [susfs_commit_android12_5_10]="9892175b4acec7ee844e113b8d02c0f4d12cdfac"
-            [susfs_commit_android13_5_10]="5326e21a7eb232f9e21debdd5164e99bee3d1e2f"
-            [susfs_commit_android13_5_15]="687d2d18d94cb2e3e72d1074778d58384d58e379"
-            [susfs_commit_android14_5_15]="6ba6ca79f85b8873b54573842093a9ae2df56cf9"
-            [susfs_commit_android14_6_1]="24743360ea08d98f6ad72b856851abed8de5854f"
+            [susfs_commit_android12_5_10]="13e7da018ddd41341b9d6ab1b279f4e712789d9e"
+            [susfs_commit_android13_5_10]="2837d10b68bacbd7f06758d301237e8f8b363adb"
+            [susfs_commit_android13_5_15]="138a6641afd25fb04f803361232c44ef2e033e61"
+            [susfs_commit_android14_5_15]="1f88baa37858183a45c62ad5aea315f27b3a8fc1"
+            [susfs_commit_android14_6_1]="17dc6b683b26e036242bfcfe86b33c5982590237"
             [susfs_commit_android15_6_6]="a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
             [susfs_commit_android16_6_12]="b213c54126fb243595ce7876e91d84d6e0861fec"
           )
           # SukiSU-Ultra keeps its own SUSFS pin set too (same starting values).
           declare -A PIN_SUSFS_SUKISU_ULTRA=(
-            [susfs_commit_android12_5_10]="9892175b4acec7ee844e113b8d02c0f4d12cdfac"
-            [susfs_commit_android13_5_10]="5326e21a7eb232f9e21debdd5164e99bee3d1e2f"
-            [susfs_commit_android13_5_15]="687d2d18d94cb2e3e72d1074778d58384d58e379"
-            [susfs_commit_android14_5_15]="6ba6ca79f85b8873b54573842093a9ae2df56cf9"
-            [susfs_commit_android14_6_1]="24743360ea08d98f6ad72b856851abed8de5854f"
+            [susfs_commit_android12_5_10]="13e7da018ddd41341b9d6ab1b279f4e712789d9e"
+            [susfs_commit_android13_5_10]="2837d10b68bacbd7f06758d301237e8f8b363adb"
+            [susfs_commit_android13_5_15]="138a6641afd25fb04f803361232c44ef2e033e61"
+            [susfs_commit_android14_5_15]="1f88baa37858183a45c62ad5aea315f27b3a8fc1"
+            [susfs_commit_android14_6_1]="17dc6b683b26e036242bfcfe86b33c5982590237"
             [susfs_commit_android15_6_6]="a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
             [susfs_commit_android16_6_12]="b213c54126fb243595ce7876e91d84d6e0861fec"
           )
