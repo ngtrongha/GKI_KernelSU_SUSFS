@@ -1,0 +1,33 @@
+From: Antigravity <antigravity@google.com>
+Date: Mon, 12 Oct 2026 00:00:00 +0000
+Subject: [PATCH] sched/cpufreq_schedutil: enforce up_rate_limit_us=0 and unhindered iowait boost
+
+Set default up_rate_limit_us to 0 to eliminate frequency transition ramp-up delays
+on CPU load spikes and ensure full immediate iowait_boost responsiveness on Xiaomi 14.
+
+Signed-off-by: Antigravity <antigravity@google.com>
+---
+ kernel/sched/cpufreq_schedutil.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/kernel/sched/cpufreq_schedutil.c
++++ b/kernel/sched/cpufreq_schedutil.c
+@@ -210,6 +210,8 @@ static void sugov_iowait_boost(struct sugov_cpu *sg_cpu, u64 time,
+ 		return;
+ 
+ 	/* Full iowait boost: scale instantly to max capacity */
++	sg_cpu->iowait_boost = sg_cpu->iowait_boost_max;
++	sg_cpu->iowait_boost_pending = true;
+ }
+@@ -750,7 +752,8 @@ static int sugov_init(struct cpufreq_policy *policy)
+ 	if (ret)
+ 		goto stop_kthread;
+ 
+-	tunables->up_rate_limit_us = 500;
++	/* Enforce 0 latency up rate limit for maximum responsiveness */
++	tunables->up_rate_limit_us = 0;
+ 	tunables->down_rate_limit_us = 20000;
+ 
+ 	policy->governor_data = sg_policy;
+-- 
+2.43.0

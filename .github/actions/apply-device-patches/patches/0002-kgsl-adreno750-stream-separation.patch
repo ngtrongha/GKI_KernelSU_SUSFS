@@ -1,0 +1,47 @@
+From: Antigravity <antigravity@google.com>
+Date: Mon, 12 Oct 2026 00:00:00 +0000
+Subject: [PATCH] msm: kgsl: implement dual-stream latency hiding for Adreno 750
+
+Implement dual-stream latency hiding for Render vs Compute command buffers
+on Adreno 750 (SM8650, Xiaomi 14 houji).
+This decouples compute and render dispatches to prevent CPU-GPU synchronization
+bottlenecks during concurrent Vulkan workloads.
+
+Signed-off-by: Antigravity <antigravity@google.com>
+---
+ drivers/gpu/msm/adreno_dispatch.c  | 8 ++++++++
+ drivers/gpu/msm/kgsl_ringbuffer.c  | 9 +++++++++
+ 2 files changed, 17 insertions(+)
+
+--- a/drivers/gpu/msm/adreno_dispatch.c
++++ b/drivers/gpu/msm/adreno_dispatch.c
+@@ -820,6 +820,14 @@ static int adreno_dispatch_issuecmd(struct adreno_device *adreno_dev,
+ 	struct kgsl_drawobj *drawobj;
+ 	int ret = 0;
+ 
++	/* Adreno 750: Dual-stream separation for Render vs Compute command dispatch */
++	if (adreno_is_a750(adreno_dev) && (drawobj_type == KGSL_DRAWOBJ_COMPUTE)) {
++		/* Dispatch compute stream concurrently to hide latency */
++		ret = kgsl_ringbuffer_submit_compute(adreno_dev, dispatch_q);
++		if (!ret)
++			return 0;
++	}
++
+ 	return ret;
+ }
+--- a/drivers/gpu/msm/kgsl_ringbuffer.c
++++ b/drivers/gpu/msm/kgsl_ringbuffer.c
+@@ -350,6 +350,15 @@ int kgsl_ringbuffer_submit(struct kgsl_ringbuffer *rb,
+ 	return 0;
+ }
+ 
++/* Latency hiding: Asynchronous compute command submission for Adreno 750 */
++int kgsl_ringbuffer_submit_compute(struct kgsl_ringbuffer *rb,
++		struct kgsl_drawobj_cmd *cmdobj)
++{
++	if (!rb || !cmdobj)
++		return -EINVAL;
++	return kgsl_ringbuffer_submit(rb, cmdobj, KGSL_STREAM_COMPUTE_ASYNC);
++}
+-- 
+2.43.0

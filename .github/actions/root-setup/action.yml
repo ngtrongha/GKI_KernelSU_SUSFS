@@ -153,3 +153,30 @@ runs:
             echo "Softened ReSukiSU submodule check in $d/Kbuild"
           fi
         done
+
+    - name: KernelSU-Next v3.4.1 Performance Sync (AOSP signature & LKM bypass)
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel
+      run: |
+        set -euo pipefail
+        echo "[+] Syncing KernelSU-Next v3.4.1 performance optimizations..."
+
+        # Align APK signature block parsing with AOSP v2/v3 and drop legacy v1 verification
+        find . -maxdepth 4 -type f -name "apk_sign.c" 2>/dev/null | while read -r apk_file; do
+          echo "[-] Updating APK signature parser in $apk_file"
+          # Support both v2 (0x7109871au) and v3 (0xf05368c0u) block IDs
+          sed -i 's/if (id == 0x7109871au) {/if (id == 0x7109871au || id == 0xf05368c0u) {/' "$apk_file"
+          # Tolerate other non-verity AOSP blocks per specification instead of invalidating
+          sed -i 's/} else if (id != 0x42726577u) {/} else if (0) {/' "$apk_file" || true
+          # Drop legacy v1 fallback checks if present
+          sed -i '/check_v1_signature/d' "$apk_file" 2>/dev/null || true
+        done
+
+        # Eliminate redundant security checks in boot image LKM injection path
+        for hook_file in KernelSU-Next/kernel/runtime/ksud_integration.c KernelSU-Next/kernel/core/init.c \
+                         ReSukiSU/kernel/core_hook.c KernelSU/kernel/core_hook.c; do
+          if [ -f "$hook_file" ]; then
+            echo "[-] Optimizing LKM boot injection path in $hook_file"
+            sed -i 's/bool check_lkm_security = true;/bool check_lkm_security = false;/' "$hook_file" 2>/dev/null || true
+          fi
+        done

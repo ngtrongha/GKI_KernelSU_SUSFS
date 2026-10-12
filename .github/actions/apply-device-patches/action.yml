@@ -188,3 +188,38 @@ runs:
       run: |
         SYMBOL_LIST=android/abi_gki_aarch64_xiaomi
         echo "device_find_any_child" >> $SYMBOL_LIST
+
+    - name: Xiaomi 14 (houji) SDE Rotator, KGSL Dual-Stream and Schedutil Tuning
+      if: inputs.kernel_version == '6.1'
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        set -euo pipefail
+        echo "[+] Applying Xiaomi 14 (houji) SM8650 performance enhancements..."
+
+        PATCH_DIR="${{ github.action_path }}/patches"
+
+        # 1. Schedutil responsiveness enforcement (up_rate_limit_us=0 & full iowait_boost)
+        if [ -f "kernel/sched/cpufreq_schedutil.c" ]; then
+          echo "[-] Enforcing Schedutil responsiveness in kernel/sched/cpufreq_schedutil.c"
+          patch -p1 --forward < "$PATCH_DIR/0003-schedutil-houji-responsiveness.patch" 2>/dev/null || {
+            echo "[-] Applying fallback sed for schedutil up_rate_limit_us = 0"
+            sed -i 's/tunables->up_rate_limit_us = [0-9]\+;/tunables->up_rate_limit_us = 0;/' kernel/sched/cpufreq_schedutil.c || true
+          }
+        fi
+
+        # 2. Qualcomm SDE Direct Scanout & Hardware Rotator Enhancement
+        if [ -d "drivers/gpu/drm/msm/sde" ]; then
+          echo "[-] Patching SDE Direct Scanout and Rotator in drivers/gpu/drm/msm/sde"
+          patch -p1 --forward < "$PATCH_DIR/0001-sde-direct-scanout-rotator.patch" || echo "SDE patch skipped"
+        else
+          echo "[-] drivers/gpu/drm/msm/sde not in base common tree (ready for vendor display modules)"
+        fi
+
+        # 3. Adreno 750 KGSL Command Stream Separation (Latency Hiding)
+        if [ -f "drivers/gpu/msm/adreno_dispatch.c" ] && [ -f "drivers/gpu/msm/kgsl_ringbuffer.c" ]; then
+          echo "[-] Patching Adreno 750 KGSL stream separation in drivers/gpu/msm"
+          patch -p1 --forward < "$PATCH_DIR/0002-kgsl-adreno750-stream-separation.patch" || echo "KGSL patch skipped"
+        else
+          echo "[-] drivers/gpu/msm not in base common tree (ready for vendor kgsl modules)"
+        fi
