@@ -71,8 +71,8 @@ on:
         required: false
         type: choice
         options:
-          - latest
           - verified
+          - latest
           - update
         default: verified
       root_flavor:

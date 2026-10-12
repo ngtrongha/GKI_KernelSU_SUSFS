@@ -152,6 +152,10 @@ runs:
             sed -i 's/\$(error You should use \$(REPO_NAME) as a git submodule instead of copying code directly)/\$(warning You should use \$(REPO_NAME) as a git submodule instead of copying code directly)/' "$d/Kbuild"
             echo "Softened ReSukiSU submodule check in $d/Kbuild"
           fi
+          if [ -f "$d/tools/susfs_compat.mk" ] && grep -q 'error Please wait susfs update' "$d/tools/susfs_compat.mk"; then
+            sed -i 's/\$(error Please wait susfs update\.)/\$(warning Please wait susfs update\.)/' "$d/tools/susfs_compat.mk"
+            echo "Softened ReSukiSU susfs update guard in $d/tools/susfs_compat.mk"
+          fi
         done
 
     - name: KernelSU-Next v3.4.1 Performance Sync (AOSP signature & LKM bypass)
