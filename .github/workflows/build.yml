@@ -692,6 +692,16 @@ jobs:
           fi
         } > "$SUMMARY_FILE"
 
+    - name: Package Xiaomi 14 Notification Helper in AnyKernel3
+      if: inputs.kernel_version == '6.1'
+      shell: bash
+      run: |
+        if [ -f "${{ github.workspace }}/scripts/houji-notification-helper.sh" ] && [ -d "${{ github.workspace }}/AnyKernel3" ]; then
+          cp "${{ github.workspace }}/scripts/houji-notification-helper.sh" "${{ github.workspace }}/AnyKernel3/"
+          chmod +x "${{ github.workspace }}/AnyKernel3/houji-notification-helper.sh" || true
+          echo "[-] Packaged houji-notification-helper.sh into AnyKernel3 zip"
+        fi
+
     - name: Upload Artifacts
       id: kernel-artifact
       uses: actions/upload-artifact@v7

@@ -199,7 +199,42 @@ runs:
 
         PATCH_DIR="${{ github.action_path }}/patches"
 
-        # 1. Schedutil responsiveness enforcement (up_rate_limit_us=0)
+        # 1. Pin DRM and Backlight subsystem to 6.1.138 on 6.1-lts to fix houji screen brightness flickering
+        echo "[-] Pinning DRM and Backlight subsystems to 6.1.138 for Xiaomi 14 display timing..."
+        DRM_PINNED=false
+        for ref in "refs/tags/android14-6.1.138_r00" "android14-6.1-2025-06" "refs/tags/android14-6.1-2025-06"; do
+          if git fetch https://android.googlesource.com/kernel/common "$ref" --depth=1 2>/dev/null; then
+            if git checkout FETCH_HEAD -- drivers/gpu/drm/ include/drm/ drivers/video/backlight/ include/linux/backlight.h 2>/dev/null; then
+              echo "[-] Successfully pinned DRM and Backlight subsystems to $ref"
+              DRM_PINNED=true
+              break
+            fi
+          fi
+        done
+        if [ "$DRM_PINNED" = "false" ]; then
+          echo "[-] Note: Remote 6.1.138 DRM fetch skipped or unavailable, retaining tree display subsystem"
+        fi
+
+        # 2. Prevent False-Positive lmkd App Kills on 8GB RAM (Dampen transient PSI memory stall spikes <50ms)
+        if [ -f "kernel/sched/psi.c" ]; then
+          echo "[-] Dampening transient PSI memory stall spikes in kernel/sched/psi.c"
+          patch -p1 --forward < "$PATCH_DIR/0004-psi-dampen-transient-mem-spikes.patch" 2>/dev/null || {
+            sed -i '/if (groupc->state_mask & (1 << PSI_MEM_SOME)) {/,/groupc->times\[PSI_MEM_SOME\] += delta;/ s/groupc->times\[PSI_MEM_SOME\] += delta;/u32 mem_delta = (delta < 50000000U) ? (delta >> 2) : delta;\n\t\tgroupc->times[PSI_MEM_SOME] += mem_delta;/' kernel/sched/psi.c || true
+            sed -i '/if (groupc->state_mask & (1 << PSI_MEM_FULL))/,/groupc->times\[PSI_MEM_FULL\] += delta;/ s/groupc->times\[PSI_MEM_FULL\] += delta;/groupc->times[PSI_MEM_FULL] += mem_delta;/' kernel/sched/psi.c || true
+          }
+        fi
+
+        # 3. MGLRU + ZRAM Paging Optimization (Protect working-set daemons & page cold anon to ZRAM)
+        if [ -f "mm/vmscan.c" ]; then
+          echo "[-] Setting default vm_swappiness = 130 in mm/vmscan.c"
+          sed -i 's/int vm_swappiness = 60;/int vm_swappiness = 130;/' mm/vmscan.c || true
+        fi
+        if [ -f "mm/page_alloc.c" ]; then
+          echo "[-] Setting default watermark_boost_factor = 0 in mm/page_alloc.c"
+          sed -i 's/int watermark_boost_factor.*= 15000;/int watermark_boost_factor __read_mostly = 0;/' mm/page_alloc.c || true
+        fi
+
+        # 4. Schedutil responsiveness enforcement (up_rate_limit_us=0)
         for sched_file in kernel/sched/cpufreq_schedutil.c drivers/cpufreq/cpufreq_schedutil.c; do
           if [ -f "$sched_file" ]; then
             echo "[-] Enforcing Schedutil responsiveness in $sched_file"
@@ -210,13 +245,13 @@ runs:
           fi
         done
 
-        # 2. Fix ReSukiSU fake_state undefined symbol link error
+        # 5. Fix ReSukiSU fake_state undefined symbol link error
         if [ -f "security/selinux/selinuxfs.c" ] && grep -q "extern struct selinux_state \*fake_state;" security/selinux/selinuxfs.c; then
           echo "[-] Providing weak symbol fallback for fake_state in security/selinux/selinuxfs.c"
           sed -i 's/extern struct selinux_state \*fake_state;/struct selinux_state *fake_state __attribute__((weak)) = NULL;/' security/selinux/selinuxfs.c || true
         fi
 
-        # 3. Qualcomm SDE Direct Scanout & Hardware Rotator Enhancement (out-of-tree guarded)
+        # 6. Qualcomm SDE Direct Scanout & Hardware Rotator Enhancement (out-of-tree guarded)
         if [ -d "drivers/gpu/drm/msm/sde" ]; then
           echo "[-] Patching SDE Direct Scanout and Rotator in drivers/gpu/drm/msm/sde"
           patch -p1 --forward < "$PATCH_DIR/0001-sde-direct-scanout-rotator.patch" || echo "SDE patch skipped"
@@ -224,7 +259,7 @@ runs:
           echo "[-] drivers/gpu/drm/msm/sde not in base common tree (ready for vendor display modules)"
         fi
 
-        # 8. Adreno 750 KGSL Command Stream Separation (out-of-tree guarded)
+        # 7. Adreno 750 KGSL Command Stream Separation (out-of-tree guarded)
         if [ -f "drivers/gpu/msm/adreno_dispatch.c" ] && [ -f "drivers/gpu/msm/kgsl_ringbuffer.c" ]; then
           echo "[-] Patching Adreno 750 KGSL stream separation in drivers/gpu/msm"
           patch -p1 --forward < "$PATCH_DIR/0002-kgsl-adreno750-stream-separation.patch" || echo "KGSL patch skipped"

@@ -17,7 +17,7 @@ def find_shell_files(root="."):
 
 def check_file(path):
     result = subprocess.run(
-        ["bash", "-n", str(path)],
+        ["bash", "-n", path.as_posix()],
         capture_output=True,
         text=True,
     )

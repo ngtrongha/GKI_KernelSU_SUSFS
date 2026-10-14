@@ -1,0 +1,27 @@
+From: Antigravity <antigravity@google.com>
+Date: Thu, 15 Oct 2026 00:00:00 +0000
+Subject: [PATCH] psi: dampen transient memory stall spikes during brief ZRAM bursts
+
+Dampen short memory stalls (<50ms) by scaling them to delta >> 2 to prevent
+false-positive PSI memory spikes during normal ZRAM swap-in bursts, preventing
+Android lmkd from killing background apps prematurely on 8GB RAM devices.
+
+Signed-off-by: Antigravity <antigravity@google.com>
+---
+ kernel/sched/psi.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/kernel/sched/psi.c
++++ b/kernel/sched/psi.c
+@@ -218,6 +218,10 @@ static void record_times(struct psi_group_cpu *groupc, u64 now)
+ 	if (groupc->state_mask & (1 << PSI_MEM_SOME)) {
++		/* Dampen transient ZRAM decompression bursts (<50ms) to prevent false lmkd kills */
++		u32 mem_delta = (delta < 50000000U) ? (delta >> 2) : delta;
+-		groupc->times[PSI_MEM_SOME] += delta;
++		groupc->times[PSI_MEM_SOME] += mem_delta;
+ 		if (groupc->state_mask & (1 << PSI_MEM_FULL))
+-			groupc->times[PSI_MEM_FULL] += delta;
++			groupc->times[PSI_MEM_FULL] += mem_delta;
+ 	}
+-- 
+2.43.0
