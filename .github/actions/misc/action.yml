@@ -29,6 +29,7 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
+          CONFIG_LRU_GEN=y
           CONFIG_LRU_GEN_ENABLED=y
           CONFIG_MQ_IOSCHED_DEADLINE=y
           CONFIG_ZRAM_DEF_COMP_LZ4=y
@@ -40,4 +41,10 @@ runs:
           CONFIG_PSTORE=y
           CONFIG_PSTORE_CONSOLE=y
           CONFIG_PSTORE_RAM=y
+          CONFIG_TRANSPARENT_HUGEPAGE=y
+          CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+          # CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS is not set
+          CONFIG_MUTEX_SPIN_ON_OWNER=y
+          CONFIG_RWSEM_SPIN_ON_OWNER=y
+          # CONFIG_DAMON_RECLAIM is not set
           

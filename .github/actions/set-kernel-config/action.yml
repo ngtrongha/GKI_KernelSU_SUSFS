@@ -27,11 +27,13 @@ runs:
         local line="$1"
         line="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
-        # skip empty/comments
-        [[ -z "$line" || "$line" == \#* ]] && return
-
         local key value
-        if [[ "$line" == *"="* ]]; then
+        if [[ "$line" =~ ^#[[:space:]]*(CONFIG_[A-Za-z0-9_]+)[[:space:]]+is[[:space:]]+not[[:space:]]+set ]]; then
+          key="${BASH_REMATCH[1]}"
+          value="n"
+        elif [[ -z "$line" || "$line" == \#* ]]; then
+          return
+        elif [[ "$line" == *"="* ]]; then
           key="${line%%=*}"
           value="${line#*=}"
         else
@@ -39,16 +41,24 @@ runs:
           value="y"
         fi
 
-        echo "Processing: $key=$value"
-
-        # if config exists anywhere in file → replace it
-        if grep -q "^$key=" "$DEFCONFIG"; then
-          sed -i "s|^$key=.*|$key=$value|g" "$DEFCONFIG"
-        elif grep -q "^# $key is not set" "$DEFCONFIG"; then
-          sed -i "s|^# $key is not set|$key=$value|g" "$DEFCONFIG"
+        if [ "$value" = "n" ]; then
+          echo "Processing: # $key is not set"
+          if grep -q "^$key=" "$DEFCONFIG"; then
+            sed -i "s|^$key=.*|# $key is not set|g" "$DEFCONFIG"
+          elif grep -q "^# $key is not set" "$DEFCONFIG"; then
+            :
+          else
+            echo "# $key is not set" >> "$DEFCONFIG"
+          fi
         else
-          # not present → append
-          echo "$key=$value" >> "$DEFCONFIG"
+          echo "Processing: $key=$value"
+          if grep -q "^$key=" "$DEFCONFIG"; then
+            sed -i "s|^$key=.*|$key=$value|g" "$DEFCONFIG"
+          elif grep -q "^# $key is not set" "$DEFCONFIG"; then
+            sed -i "s|^# $key is not set|$key=$value|g" "$DEFCONFIG"
+          else
+            echo "$key=$value" >> "$DEFCONFIG"
+          fi
         fi
       }
 
