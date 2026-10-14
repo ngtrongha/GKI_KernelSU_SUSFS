@@ -231,8 +231,7 @@ runs:
         if [ -f "drivers/android/binder_alloc.c" ]; then
           echo "[-] Optimizing binder_alloc buffer search paths in drivers/android/binder_alloc.c"
           patch -p1 --forward < "$PATCH_DIR/0004-binder-alloc-fastpath.patch" 2>/dev/null || {
-            echo "[-] Applying fallback sed for binder_alloc search fast-path"
-            sed -i 's/if (is_async &&/if (unlikely(is_async \&\&/' drivers/android/binder_alloc.c || true
+            sed -i 's/if (is_async && alloc->free_async_space < size)/if (unlikely(is_async \&\& alloc->free_async_space < size))/' drivers/android/binder_alloc.c || true
             sed -i 's/} else if (size > buffer_size)/} else if (likely(size > buffer_size))/' drivers/android/binder_alloc.c || true
           }
         fi
