@@ -158,6 +158,14 @@ runs:
       run: |
         patch -p1 < 50_add_susfs_in_gki-${{ inputs.version }}.patch
 
+        # Provide weak symbol fallback for fake_state in security/selinux/selinuxfs.c
+        # KernelSU and KernelSU-Next define fake_state strongly in drivers/kernelsu/selinux_hide.c.
+        # ReSukiSU does not define fake_state, leading to ld.lld undefined symbol error if unhandled.
+        if [ -f "security/selinux/selinuxfs.c" ] && grep -q "extern struct selinux_state \*fake_state;" security/selinux/selinuxfs.c; then
+          echo "Providing weak symbol fallback for fake_state in security/selinux/selinuxfs.c"
+          sed -i 's/extern struct selinux_state \*fake_state;/struct selinux_state *fake_state __attribute__((weak)) = NULL;/' security/selinux/selinuxfs.c || true
+        fi
+
         # SUSFS's OPEN_REDIRECT code unconditionally calls VMA_PAD_START(), which
         # only exists on GKI branches that carry Google's page-size-migration
         # feature (added to each android version's kernel/common branch at a

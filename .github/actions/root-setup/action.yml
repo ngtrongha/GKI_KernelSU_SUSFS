@@ -158,12 +158,12 @@ runs:
           fi
         done
 
-    - name: KernelSU-Next v3.4.1 Performance Sync and Bootloop Protection
+    - name: KernelSU-Next v3.4.1 Performance Sync (AOSP signature & LKM bypass)
       shell: bash
       working-directory: ${{ github.workspace }}/kernel
       run: |
         set -euo pipefail
-        echo "[+] Syncing KernelSU-Next v3.4.1 performance and bootloop protections..."
+        echo "[+] Syncing KernelSU-Next v3.4.1 performance optimizations..."
 
         # Align APK signature block parsing with AOSP v2/v3 and drop legacy v1 verification
         find . -maxdepth 4 -type f -name "apk_sign.c" 2>/dev/null | while read -r apk_file; do
@@ -174,42 +174,13 @@ runs:
           sed -i 's/} else if (id != 0x42726577u) {/} else if (0) {/' "$apk_file" || true
           # Drop legacy v1 fallback checks if present
           sed -i '/check_v1_signature/d' "$apk_file" 2>/dev/null || true
-
-          # Ensure kernel_read() return values are checked during APK signature verification (tiann/KernelSU#3594)
-          sed -i 's/kernel_read(file, &magic, sizeof(magic), &offset);/if (kernel_read(file, \&magic, sizeof(magic), \&offset) != sizeof(magic)) return false;/g' "$apk_file" 2>/dev/null || true
-          sed -i 's/kernel_read(file, &len, sizeof(len), &offset);/if (kernel_read(file, \&len, sizeof(len), \&offset) != sizeof(len)) return false;/g' "$apk_file" 2>/dev/null || true
-          sed -i 's/kernel_read(fp, &size, 4, &pos);/if (kernel_read(fp, \&size, 4, \&pos) != 4) return false;/g' "$apk_file" 2>/dev/null || true
-          sed -i 's/kernel_read(fp, &id, 4, &pos);/if (kernel_read(fp, \&id, 4, \&pos) != 4) return false;/g' "$apk_file" 2>/dev/null || true
         done
 
         # Eliminate redundant security checks in boot image LKM injection path
         for hook_file in KernelSU-Next/kernel/runtime/ksud_integration.c KernelSU-Next/kernel/core/init.c \
-                         ReSukiSU/kernel/core_hook.c KernelSU/kernel/core_hook.c \
-                         SukiSU-Ultra/kernel/core_hook.c KowSU/kernel/core_hook.c; do
+                         ReSukiSU/kernel/core_hook.c KernelSU/kernel/core_hook.c; do
           if [ -f "$hook_file" ]; then
             echo "[-] Optimizing LKM boot injection path in $hook_file"
             sed -i 's/bool check_lkm_security = true;/bool check_lkm_security = false;/' "$hook_file" 2>/dev/null || true
-          fi
-        done
-
-        # Prevent /system/bin/stub_zygote from being unmarked (tiann/KernelSU#3601)
-        for hook_file in KernelSU-Next/kernel/core_hook.c ReSukiSU/kernel/core_hook.c \
-                         KernelSU/kernel/core_hook.c SukiSU-Ultra/kernel/core_hook.c \
-                         KowSU/kernel/core_hook.c common/drivers/kernelsu/core_hook.c \
-                         drivers/kernelsu/core_hook.c; do
-          if [ -f "$hook_file" ]; then
-            echo "[-] Applying stub_zygote boot protection in $hook_file (PR #3601)"
-            if ! grep -q "stub_zygote" "$hook_file"; then
-              sed -i '/if.*is_zygote.*{/a \\t\tif (strstr(path, "/stub_zygote")) return 0;' "$hook_file" 2>/dev/null || \
-              sed -i '/if (is_zygote) {/a \\t\tif (strstr(buf, "/stub_zygote")) return 0;' "$hook_file" 2>/dev/null || true
-            fi
-          fi
-        done
-
-        # Guard SUSFS try_umount against pre-FBE decryption execution
-        find . -maxdepth 4 -type f \( -name "susfs.c" -o -name "susfs_core.c" \) 2>/dev/null | while read -r susfs_file; do
-          echo "[-] Guarding SUSFS try_umount against pre-FBE decryption in $susfs_file"
-          if ! grep -q "current->fs->root.dentry" "$susfs_file"; then
-            sed -i '/int susfs_try_umount(/,/^{/ { /{/a \\tif (!current->fs || !current->fs->root.dentry) return 0;' "$susfs_file" 2>/dev/null || true
           fi
         done
