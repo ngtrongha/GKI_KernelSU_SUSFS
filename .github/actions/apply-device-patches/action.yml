@@ -199,14 +199,13 @@ runs:
 
         PATCH_DIR="${{ github.action_path }}/patches"
 
-        # 1. Schedutil responsiveness enforcement (up_rate_limit_us=0 & full iowait_boost)
+        # 1. Schedutil responsiveness enforcement (up_rate_limit_us=0)
         for sched_file in kernel/sched/cpufreq_schedutil.c drivers/cpufreq/cpufreq_schedutil.c; do
           if [ -f "$sched_file" ]; then
             echo "[-] Enforcing Schedutil responsiveness in $sched_file"
             patch -p1 --forward < "$PATCH_DIR/0003-schedutil-houji-responsiveness.patch" 2>/dev/null || {
-              echo "[-] Applying fallback sed for schedutil up_rate_limit_us = 0 and full iowait_boost"
+              echo "[-] Applying fallback sed for schedutil up_rate_limit_us = 0"
               sed -i 's/tunables->up_rate_limit_us = [0-9]\+;/tunables->up_rate_limit_us = 0;/' "$sched_file" || true
-              sed -i 's/sg_cpu->iowait_boost >>= 1;/sg_cpu->iowait_boost = sg_cpu->iowait_boost_max;/' "$sched_file" || true
             }
           fi
         done
