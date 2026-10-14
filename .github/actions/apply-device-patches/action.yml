@@ -199,13 +199,13 @@ runs:
 
         PATCH_DIR="${{ github.action_path }}/patches"
 
-        # 1. Pin DRM and Backlight subsystem to 6.1.138 on 6.1-lts to fix houji screen brightness flickering
-        echo "[-] Pinning DRM and Backlight subsystems to 6.1.138 for Xiaomi 14 display timing..."
+        # 1. Pin VBlank and Backlight subsystem to 6.1.138 on 6.1-lts to fix houji screen brightness flickering
+        echo "[-] Pinning VBlank and Backlight timing to 6.1.138 for Xiaomi 14 display timing..."
         DRM_PINNED=false
         for ref in "refs/tags/android14-6.1.138_r00" "android14-6.1-2025-06" "refs/tags/android14-6.1-2025-06"; do
           if git fetch https://android.googlesource.com/kernel/common "$ref" --depth=1 2>/dev/null; then
-            if git checkout FETCH_HEAD -- drivers/gpu/drm/ include/drm/ drivers/video/backlight/ include/linux/backlight.h 2>/dev/null; then
-              echo "[-] Successfully pinned DRM and Backlight subsystems to $ref"
+            if git checkout FETCH_HEAD -- drivers/gpu/drm/drm_vblank.c drivers/gpu/drm/drm_atomic_helper.c drivers/gpu/drm/drm_panel.c include/drm/drm_vblank.h include/drm/drm_panel.h drivers/video/backlight/ include/linux/backlight.h 2>/dev/null; then
+              echo "[-] Successfully pinned VBlank and Backlight to $ref"
               DRM_PINNED=true
               break
             fi
@@ -213,6 +213,11 @@ runs:
         done
         if [ "$DRM_PINNED" = "false" ]; then
           echo "[-] Note: Remote 6.1.138 DRM fetch skipped or unavailable, retaining tree display subsystem"
+        fi
+
+        # Safeguard: prevent -Wvla from failing Clang build
+        if [ -f "Makefile" ]; then
+          sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
         fi
 
         # 2. Prevent False-Positive lmkd App Kills on 8GB RAM (Dampen transient PSI memory stall spikes <50ms)
