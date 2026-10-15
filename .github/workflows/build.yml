@@ -160,6 +160,33 @@ jobs:
         kernel_version: ${{ inputs.kernel_version }}
         os_patch_level: ${{ inputs.os_patch_level }}
 
+    - name: Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)
+      if: inputs.kernel_version == '6.1' && inputs.os_patch_level == 'lts'
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        set -euo pipefail
+        echo "[+] Aligning 6.1-lts source with ACK android14-6.1 (6.1.177 LTS + vendor hooks)..."
+        # 1. Fetch latest android14-6.1 (Linux 6.1.177 LTS + full ANDROID: GKI vendor hooks)
+        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
+        git checkout -B lts-177-ack FETCH_HEAD
+
+        # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
+        echo "[-] Surgically pinning display DRM/SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
+        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
+        git checkout FETCH_HEAD -- \
+          drivers/gpu/drm/ \
+          include/drm/ \
+          drivers/video/backlight/ \
+          include/linux/backlight.h \
+          drivers/spmi/
+
+        # Prevent -Wvla build error in pinned drivers/gpu/drm
+        if [ -f "Makefile" ]; then
+          sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
+          grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
+        fi
+
     - name: Set Build Timestamp from Kernel Commit
       shell: bash
       run: |
@@ -404,6 +431,7 @@ jobs:
       with:
         version: ${{ inputs.version }}
         kernel_version: ${{ inputs.kernel_version }}
+        os_patch_level: ${{ inputs.os_patch_level }}
 
     - name: Integrate NoMount
       if: contains(inputs.feature_set, 'NoMount') || inputs.feature_set == 'All'
@@ -699,7 +727,19 @@ jobs:
         if [ -f "${{ github.workspace }}/scripts/houji-notification-helper.sh" ] && [ -d "${{ github.workspace }}/AnyKernel3" ]; then
           cp "${{ github.workspace }}/scripts/houji-notification-helper.sh" "${{ github.workspace }}/AnyKernel3/"
           chmod +x "${{ github.workspace }}/AnyKernel3/houji-notification-helper.sh" || true
-          echo "[-] Packaged houji-notification-helper.sh into AnyKernel3 zip"
+          if [ -f "${{ github.workspace }}/AnyKernel3/anykernel.sh" ]; then
+            {
+              echo ""
+              echo "# Xiaomi 14 (houji) notification service helper auto-install"
+              echo 'if [ -f "$home/houji-notification-helper.sh" ]; then'
+              echo '  ui_print "Installing Xiaomi 14 notification keeper..."'
+              echo '  mkdir -p /data/adb/service.d'
+              echo '  cp -f "$home/houji-notification-helper.sh" /data/adb/service.d/houji-notification-helper.sh'
+              echo '  chmod 755 /data/adb/service.d/houji-notification-helper.sh'
+              echo 'fi'
+            } >> "${{ github.workspace }}/AnyKernel3/anykernel.sh"
+          fi
+          echo "[-] Packaged and wired houji-notification-helper.sh into AnyKernel3 zip"
         fi
 
     - name: Upload Artifacts
