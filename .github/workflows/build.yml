@@ -171,8 +171,11 @@ jobs:
         git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
         git checkout -B lts-177-ack FETCH_HEAD
 
-        # 2. Surgically pin ONLY the Display DRM, DMA-Buf Fence & SPMI interface to certified 6.1.138 (2025-06)
-        echo "[-] Surgically pinning Display DRM, DMA-Buf Fence & SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
+        # 2. Surgically pin ONLY the Display DRM, DMA-Fence/Sync-File & SPMI interface to certified 6.1.138 (2025-06)
+        # Note: Keep drivers/dma-buf/dma-buf.c and include/linux/dma-buf.h on 6.1.177 because 6.1.177's
+        # mm/mmap.c, kernel/fork.c, fs/proc/base.c, and kernel/bpf/dmabuf_iter.c depend on struct task_dma_buf_info
+        # and dma_buf_account_task / dma_buf_iter_begin.
+        echo "[-] Surgically pinning Display DRM, DMA-Fence & SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
         git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
         git checkout FETCH_HEAD -- \
           drivers/gpu/drm/ \
@@ -180,8 +183,13 @@ jobs:
           drivers/video/backlight/ \
           include/linux/backlight.h \
           drivers/spmi/ \
-          drivers/dma-buf/ \
-          include/linux/dma-buf.h \
+          drivers/dma-buf/dma-fence.c \
+          drivers/dma-buf/dma-fence-array.c \
+          drivers/dma-buf/dma-fence-chain.c \
+          drivers/dma-buf/dma-fence-unwrap.c \
+          drivers/dma-buf/dma-resv.c \
+          drivers/dma-buf/sync_file.c \
+          drivers/dma-buf/sw_sync.c \
           include/linux/dma-fence.h \
           include/linux/dma-fence-array.h \
           include/linux/dma-fence-chain.h \
