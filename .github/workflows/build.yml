@@ -161,7 +161,7 @@ jobs:
         os_patch_level: ${{ inputs.os_patch_level }}
 
     - name: Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)
-      if: inputs.kernel_version == '6.1' && inputs.os_patch_level == 'lts'
+      if: inputs.kernel_version == '6.1' && (inputs.os_patch_level == 'lts' || startsWith(inputs.os_patch_level, 'lts') || inputs.os_patch_level == '177')
       shell: bash
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
