@@ -193,15 +193,13 @@ runs:
         SYMBOL_LIST=android/abi_gki_aarch64_xiaomi
         echo "device_find_any_child" >> $SYMBOL_LIST
 
-    - name: Xiaomi 14 (houji 8GB RAM) Zero-Bootloop KMI Safety and Performance Tuning
+    - name: Xiaomi 14 (houji 8GB RAM) Zero-Bootloop KMI & Build Safety
       if: inputs.kernel_version == '6.1'
       shell: bash
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
         set -euo pipefail
-        echo "[+] Applying Xiaomi 14 (houji 8GB RAM) zero-bootloop safety & performance enhancements..."
-
-        PATCH_DIR="${{ github.action_path }}/patches"
+        echo "[+] Applying Xiaomi 14 (houji 8GB RAM) zero-bootloop build safeguards (pure upstream 6.1.177 mm/sched/binder/zram C code)..."
 
         # 1. Prevent -Wvla build error across drivers/gpu/drm
         if [ -f "Makefile" ]; then
@@ -209,38 +207,28 @@ runs:
           grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
         fi
 
-        # 2. Prevent False-Positive lmkd App Kills on 8GB RAM (Dampen transient PSI memory stall spikes <50ms)
-        if [ -f "kernel/sched/psi.c" ]; then
-          echo "[-] Dampening transient PSI memory stall spikes in kernel/sched/psi.c"
-          patch -p1 --no-backup-if-mismatch --forward < "$PATCH_DIR/0004-psi-dampen-transient-mem-spikes.patch" 2>/dev/null || {
-            sed -i '/if (groupc->state_mask & (1 << PSI_MEM_SOME)) {/,/groupc->times\[PSI_MEM_SOME\] += delta;/ s/groupc->times\[PSI_MEM_SOME\] += delta;/u32 mem_delta = (delta < 50000000U) ? (delta >> 2) : delta;\n\t\tgroupc->times[PSI_MEM_SOME] += mem_delta;/' kernel/sched/psi.c || true
-            sed -i '/if (groupc->state_mask & (1 << PSI_MEM_FULL))/,/groupc->times\[PSI_MEM_FULL\] += delta;/ s/groupc->times\[PSI_MEM_FULL\] += delta;/groupc->times[PSI_MEM_FULL] += mem_delta;/' kernel/sched/psi.c || true
-          }
-          rm -f kernel/sched/*.rej || true
-        fi
-
-        # 3. MGLRU + ZRAM Paging Optimization (Protect working-set daemons & page cold anon to ZRAM)
-        if [ -f "mm/vmscan.c" ]; then
-          echo "[-] Setting default vm_swappiness = 130 in mm/vmscan.c"
-          sed -i 's/int vm_swappiness = 60;/int vm_swappiness = 130;/' mm/vmscan.c || true
-        fi
-        if [ -f "mm/page_alloc.c" ]; then
-          echo "[-] Setting default watermark_boost_factor = 0 in mm/page_alloc.c"
-          sed -i 's/int watermark_boost_factor.*= 15000;/int watermark_boost_factor __read_mostly = 0;/' mm/page_alloc.c || true
-        fi
-
-        # 4. Schedutil responsiveness enforcement (zero ramp-up delay)
-        for sched_file in kernel/sched/cpufreq_schedutil.c drivers/cpufreq/cpufreq_schedutil.c; do
-          if [ -f "$sched_file" ]; then
-            echo "[-] Enforcing Schedutil responsiveness in $sched_file"
-            sed -i 's/tunables->rate_limit_us = .*/tunables->rate_limit_us = 0;/' "$sched_file" || true
-            sed -i 's/tunables->up_rate_limit_us = [0-9]\+;/tunables->up_rate_limit_us = 0;/' "$sched_file" || true
-          fi
-        done
-        rm -f kernel/sched/*.rej drivers/cpufreq/*.rej || true
-
-        # 5. Fix ReSukiSU fake_state undefined symbol link error
+        # 2. Fix ReSukiSU fake_state undefined symbol link error
         if [ -f "security/selinux/selinuxfs.c" ] && grep -q "extern struct selinux_state \*fake_state;" security/selinux/selinuxfs.c; then
           echo "[-] Providing weak symbol fallback for fake_state in security/selinux/selinuxfs.c"
           sed -i 's/extern struct selinux_state \*fake_state;/struct selinux_state *fake_state __attribute__((weak)) = NULL;/' security/selinux/selinuxfs.c || true
         fi
+
+    - name: Xiaomi 14 (houji 8GB RAM) Lock-Safe Official gki_defconfig Options
+      if: inputs.kernel_version == '6.1'
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_LRU_GEN=y
+          CONFIG_LRU_GEN_ENABLED=y
+          CONFIG_ZRAM=y
+          # CONFIG_ZRAM_DEF_COMP_LZ4 is not set
+          CONFIG_ZRAM_DEF_COMP_ZSTD=y
+          CONFIG_CRYPTO_ZSTD=y
+          CONFIG_FUSE_PASSTHROUGH=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TRANSPARENT_HUGEPAGE=y
+          CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+          # CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS is not set
+          # CONFIG_DAMON_RECLAIM is not set
+

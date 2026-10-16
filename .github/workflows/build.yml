@@ -167,19 +167,29 @@ jobs:
       run: |
         set -euo pipefail
         echo "[+] Aligning 6.1-lts source with ACK android14-6.1 (6.1.177 LTS + vendor hooks)..."
-        # 1. Fetch latest android14-6.1 (Linux 6.1.177 LTS + full ANDROID: GKI vendor hooks)
+        # 1. Base tree: latest Google ACK android14-6.1 (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks)
         git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
         git checkout -B lts-177-ack FETCH_HEAD
 
-        # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
-        echo "[-] Surgically pinning display DRM/SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
+        # 2. Surgically pin ONLY the Display DRM, DMA-Buf Fence & SPMI interface to certified 6.1.138 (2025-06)
+        echo "[-] Surgically pinning Display DRM, DMA-Buf Fence & SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
         git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
         git checkout FETCH_HEAD -- \
           drivers/gpu/drm/ \
           include/drm/ \
           drivers/video/backlight/ \
           include/linux/backlight.h \
-          drivers/spmi/
+          drivers/spmi/ \
+          drivers/dma-buf/ \
+          include/linux/dma-buf.h \
+          include/linux/dma-fence.h \
+          include/linux/dma-fence-array.h \
+          include/linux/dma-fence-chain.h \
+          include/linux/dma-fence-unwrap.h \
+          include/linux/dma-resv.h \
+          include/linux/sync_file.h
+        git checkout FETCH_HEAD -- include/linux/dma-buf-map.h 2>/dev/null || true
+        git checkout FETCH_HEAD -- include/linux/iosys-map.h 2>/dev/null || true
 
         # Prevent -Wvla build error in pinned drivers/gpu/drm
         if [ -f "Makefile" ]; then
