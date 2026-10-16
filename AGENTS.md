@@ -94,3 +94,18 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
 - **Root Cause**: Xiaomi 14's prebuilt vendor display modules (`msm_drm.ko` and `mi_disp.ko`) were compiled by Xiaomi against kernel 6.1.138. Linux 6.1.177 upstream made breaking internal changes to atomic display plane check callbacks and CRTC timing helpers. Running pure 6.1.177 DRM causes `msm_drm.ko` to fail display panel probe/modeset, leaving the screen completely blank (black screen).
 - **Prevention**: Always surgically pin the 5 Display DRM and Backlight paths (`drivers/gpu/drm/`, `include/drm/`, `drivers/video/backlight/`, `include/linux/backlight.h`, and `drivers/spmi/`) to `refs/heads/deprecated/android14-6.1-2025-06` (`6.1.138`) while keeping `drivers/dma-buf/` on 6.1.177 and base ACK on verified commit `06aabb3c55`.
 
+---
+
+## Rule 11: Verified Ground-Truth Stock Kernel Baseline (HyperOS OS3.0.307.0.WNCCNXM)
+- **Reference Firmware**: Xiaomi 14 (`houji`), HyperOS `OS3.0.307.0.WNCCNXM` (patch level 2026-08-01, SM8650 `pineapple`).
+- **Stock Kernel Release**: `Linux version 6.1.138-android14-11-g0c3d559bcd85-ab14529422`
+- **Official Google ACK Source Tag**: `refs/tags/android14-6.1-2025-06_r15` (`0c3d559bcd85c64dae9c9c9687abbe5347fff3ad`)
+- **Official Compiler Toolchain**: Clang `r487747c` (`clang version 17.0.2`, LLD 17.0.2)
+- **IKCONFIG Verified Parameters**:
+  - `CONFIG_ARM64_4K_PAGES=y`, `CONFIG_ARM64_VA_BITS=39`, `CONFIG_HZ=250`, `CONFIG_PREEMPT=y`
+  - `CONFIG_TRANSPARENT_HUGEPAGE=y`, `CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y`
+  - `CONFIG_LRU_GEN=y`, `CONFIG_LRU_GEN_ENABLED=y`
+  - `CONFIG_ZRAM=m`, `CONFIG_ZRAM_DEF_COMP="lzo-rle"`
+  - `CONFIG_CFI_CLANG=y`, `CONFIG_LTO_NONE=y`
+- **Prevention**: When upgrading to 6.1.177+ / 6.1.190, any display/SPMI compatibility checkout must target the exact stock tag `android14-6.1-2025-06_r15` (`0c3d559bcd85`), and defconfig settings for memory/scheduler must never deviate from these verified stock values.
+

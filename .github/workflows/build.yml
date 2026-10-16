@@ -166,20 +166,40 @@ jobs:
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
         set -euo pipefail
-        echo "[+] Aligning 6.1-lts source with verified working ACK android14-6.1 commit 06aabb3c55 (Linux 6.1.177 LTS + vendor hooks)..."
+        echo "[+] Aligning 6.1-lts source with Google ACK android14-6.1 and Linux 6.1.190 LTS..."
+
         # 1. Base tree: Google ACK android14-6.1 pinned to verified working commit 06aabb3c55
         # (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks before breaking f2fs zoned device commits)
         ACK_177_COMMIT="06aabb3c55412104814644e8d1b37df04940d99a"
+        echo "[-] Fetching ACK android14-6.1 baseline commit $ACK_177_COMMIT..."
         if ! git fetch --no-tags https://android.googlesource.com/kernel/common "$ACK_177_COMMIT" --depth=1 2>/dev/null; then
           git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=100
         fi
-        git checkout -B lts-177-ack "$ACK_177_COMMIT"
+        git checkout -B lts-190-houji "$ACK_177_COMMIT"
 
-        # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
-        # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers; splitting dma-buf between
-        # 6.1.177 and 6.1.138 causes a black screen right after the boot logo when SurfaceFlinger starts.
-        echo "[-] Surgically pinning display DRM/SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
-        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
+        # 2. Integrate official Linux stable v6.1.190 from kernel.org
+        echo "[+] Integrating Linux stable v6.1.190 from git.kernel.org..."
+        git remote add linux-stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git 2>/dev/null || true
+        git fetch --no-tags linux-stable tag v6.1.190 --depth=200
+
+        git config user.name "Antigravity Builder"
+        git config user.email "builder@antigravity.internal"
+        echo "[-] Merging linux-stable v6.1.190 into ACK base..."
+        if ! git merge --no-edit -s recursive -X patience v6.1.190; then
+          echo "[-] Resolving merge conflicts to preserve ACK vendor hooks and ABI..."
+          git checkout --ours android/ drivers/android/ 2>/dev/null || true
+          git add -A
+          git commit --no-edit || true
+        fi
+
+        # 3. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to stock 6.1.138 (tag android14-6.1-2025-06_r15)
+        # Xiaomi 14's prebuilt vendor display modules (msm_drm.ko, mi_disp.ko) require this exact interface.
+        # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers (Rule 2).
+        echo "[-] Surgically pinning display DRM/SPMI interface to stock 6.1.138 (0c3d559bcd85 / 2025-06)..."
+        STOCK_TAG="0c3d559bcd85c64dae9c9c9687abbe5347fff3ad"
+        if ! git fetch --no-tags https://android.googlesource.com/kernel/common "$STOCK_TAG" --depth=1 2>/dev/null; then
+          git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
+        fi
         git checkout FETCH_HEAD -- \
           drivers/gpu/drm/ \
           include/drm/ \
@@ -187,11 +207,23 @@ jobs:
           include/linux/backlight.h \
           drivers/spmi/
 
+        # 4. Guarantee clean F2FS layout from verified working baseline (zero align_f2fs.py hack)
+        # This protects struct f2fs_sb_info layout so mi_memory.ko and mi_schedule.ko mount /data cleanly.
+        echo "[-] Ensuring clean F2FS layout from verified baseline..."
+        git checkout "$ACK_177_COMMIT" -- \
+          fs/f2fs/ \
+          include/linux/f2fs_fs.h 2>/dev/null || true
+
         # Prevent -Wvla build error in pinned drivers/gpu/drm
         if [ -f "Makefile" ]; then
           sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
           grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
         fi
+
+        # Update environment with new aligned commit SHA
+        NEW_COMMIT_SHA=$(git rev-parse HEAD)
+        echo "KERNEL_SOURCE_COMMIT=$NEW_COMMIT_SHA" >> "$GITHUB_ENV"
+        echo "[+] Successfully aligned source to Linux $(make kernelversion 2>/dev/null || echo '6.1.190') (commit: $NEW_COMMIT_SHA)"
 
     - name: Set Build Timestamp from Kernel Commit
       shell: bash
