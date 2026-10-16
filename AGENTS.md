@@ -120,3 +120,10 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
   2. Restore `fs/f2fs/` to certified baseline `06aabb3c55` to keep the working struct layout.
   3. Clean up any reject files (`*.rej`) so reject scanners do not flag them.
 
+---
+
+## Rule 13: Always Pass `-F 3` to `patch -p1` in BBRv3 and Subsystem Backports on 6.1.190+
+- **Symptom**: CI build fails at step `Setup Networking` / `Apply BBRv3 Patches` with:
+  `common/net/ipv4/sysctl_net_ipv4.c.rej` generated (hunk #1 failed at line 44).
+- **Root Cause**: Linux 6.1.190 upstream added `static int tcp_min_rcvbuf = 4096;` right above `sysctl_tcp_low_latency` in `net/ipv4/sysctl_net_ipv4.c`. Without fuzz tolerance (`-F 3`), GNU patch strictly rejects hunk #1 due to context line alteration even though the patch targets unrelated lines (`tcp_child_ehash_entries_max`).
+- **Prevention**: Always pass `-F 3` (e.g. `patch -p1 -F 3 < ...`) in `.github/actions/bbrv3/action.yml` and `.github/actions/droidspaces/action.yml` so GNU patch cleanly tolerates up to 3 lines of upstream context drift.
