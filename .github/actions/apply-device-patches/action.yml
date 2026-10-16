@@ -220,7 +220,6 @@ runs:
         config_list: |
           CONFIG_LRU_GEN=y
           CONFIG_LRU_GEN_ENABLED=y
-          CONFIG_ZRAM=y
           # CONFIG_ZRAM_DEF_COMP_LZ4 is not set
           CONFIG_ZRAM_DEF_COMP_ZSTD=y
           CONFIG_CRYPTO_ZSTD=y
