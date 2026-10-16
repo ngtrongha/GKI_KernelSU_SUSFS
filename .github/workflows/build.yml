@@ -160,37 +160,15 @@ jobs:
         kernel_version: ${{ inputs.kernel_version }}
         os_patch_level: ${{ inputs.os_patch_level }}
 
-    - name: Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)
+    - name: Align 6.1-LTS Source with ACK android14-6.1 HEAD
       if: inputs.kernel_version == '6.1' && inputs.os_patch_level == 'lts'
       shell: bash
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
         set -euo pipefail
-        echo "[+] Aligning 6.1-lts source with latest ACK android14-6.1 HEAD (Linux 6.1.177+ LTS + vendor hooks)..."
-        # 1. Base tree: Latest Google ACK android14-6.1 HEAD
+        echo "[+] Aligning 6.1-lts source with 100% pure Google ACK android14-6.1 HEAD (Linux 6.1.177+ LTS + full vendor hooks)..."
         git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
         git checkout -B lts-177-ack FETCH_HEAD
-
-        # 2. Align F2FS struct ABI layout for Xiaomi HyperOS vendor module compatibility (Zero Black Screen)
-        python3 "${{ github.workspace }}/.github/scripts/align_f2fs.py" || true
-
-        # 3. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
-        # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers; splitting dma-buf between
-        # 6.1.177 and 6.1.138 causes a black screen right after the boot logo when SurfaceFlinger starts.
-        echo "[-] Surgically pinning display DRM/SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
-        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
-        git checkout FETCH_HEAD -- \
-          drivers/gpu/drm/ \
-          include/drm/ \
-          drivers/video/backlight/ \
-          include/linux/backlight.h \
-          drivers/spmi/
-
-        # Prevent -Wvla build error in pinned drivers/gpu/drm
-        if [ -f "Makefile" ]; then
-          sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
-          grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
-        fi
 
     - name: Set Build Timestamp from Kernel Commit
       shell: bash

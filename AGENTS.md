@@ -86,3 +86,11 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
   ```
 - **Root Cause**: When only a single artifact matches `pattern` across an Actions run (e.g. single-target `6.1-lts` + `KernelSU-Next`), `actions/download-artifact@v7` extracts files directly into `release-assets/` instead of `release-assets/<name>/`. Verification fails to find directory `release-assets/${name}`, attempts an API re-fetch with a broken jq query `.[0].archive_download_url`, and crashes.
 - **Prevention**: Before verification in `main.yml`, detect if a single artifact was extracted flat into `release-assets/` and wrap it into `release-assets/${single_name}/`. Use `gh run download` directly as the fallback if an artifact is missing.
+
+---
+
+## Rule 10: Never Frankenstein-Pin `drivers/gpu/drm/` from 6.1.138 onto 6.1.177+
+- **Symptom**: Kernel passes `kmi_check.py` (0 CRC mismatches), compiles cleanly, flashes via AnyKernel3, shows Xiaomi boot logo, then goes to a black screen and automatically reboots after 5–10 seconds.
+- **Root Cause**: Linux upstream modified 210+ files in `drivers/gpu/drm/` between 6.1.138 and 6.1.177, rewriting `drm/scheduler` fence callbacks (`drm_sched_entity_kill_jobs_work`) and `spsc_queue.h` memory barriers. Overwriting `drivers/gpu/drm/` from 6.1.138 onto 6.1.177 creates an internal locking and fence deadlock with 6.1.177's `drivers/dma-buf/` when SurfaceFlinger / `msm_drm.ko` initializes display buffers, causing the Qualcomm hardware watchdog to bite and force an automatic reboot.
+- **Prevention**: Run 100% pure, unadulterated Google ACK `refs/heads/android14-6.1` HEAD without pinning `drivers/gpu/drm/` or hacking `fs/f2fs/`.
+
