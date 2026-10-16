@@ -71,10 +71,10 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
 
 ---
 
-## Rule 8: Always Pin Base ACK Tree for `6.1-lts` to Verified Working Commit `06aabb3c55` (Never Blindly Pull `refs/heads/android14-6.1` HEAD)
+## Rule 8: Preserve F2FS Struct Layout When Tracking `android14-6.1` Upstream HEAD
 - **Symptom**: Kernel passes `kmi_check.py` (0 CRC mismatches), compiles cleanly, flashes via AnyKernel3, shows Xiaomi boot logo, and then **immediately goes to a black screen**.
 - **Root Cause**: On Oct 15, 2026 at 21:55 UTC, Google ACK upstream pushed 27 commits modifying `fs/f2fs/` (`a465432321`, `745bced530`, etc.) that inserted `resizable_tail_secno`, `first_seq_zone_segno`, and `pinned_area_max_secno` into `struct f2fs_mount_info` and `struct f2fs_sb_info` in `fs/f2fs/f2fs.h`. Because `fs/f2fs/` internal struct layouts are not tracked by GKI KMI symbol CRCs, `kmi_check.py` passed with 0 mismatches, but Xiaomi 14's prebuilt vendor modules hooking `trace_android_vh_f2fs_iostat_*` dereferenced shifted struct offsets when `init` mounted `/data` (`f2fs`), crashing/hanging the device into an immediate black screen right after the bootloader logo.
-- **Prevention**: In `.github/workflows/build.yml`, pin the base ACK tree for `6.1-lts` to verified working commit `06aabb3c55412104814644e8d1b37df04940d99a` (`refs/heads/android14-6.1` before the breaking f2fs commits) instead of unpinned `refs/heads/android14-6.1` HEAD.
+- **Prevention**: When tracking the latest `refs/heads/android14-6.1` upstream HEAD, apply an ABI layout alignment in `fs/f2fs/f2fs.h` that relocates `first_seq_zone_segno`, `pinned_area_max_secno`, and `resizable_tail_secno` to the end of `struct f2fs_sb_info` (after `iostat_io_lat`). This preserves 100% of the byte offsets of `mount_opt`, `iostat_lock`, and `iostat_io_lat` expected by Xiaomi's prebuilt vendor modules (`mi_ext_lru.ko`, `mi_memory.ko`).
 
 ---
 
