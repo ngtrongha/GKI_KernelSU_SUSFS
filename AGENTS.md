@@ -130,9 +130,12 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
 
 ---
 
-## Rule 14: Restore Core ACK Subsystems (`kernel/sched/`, `mm/`, `fs/`, `dma-buf`) After Rawdiff on 6.1.190
-- **Symptom**: Bazel fails during `//common:kernel_aarch64` with:
-  `kernel/sched/psi.c:1108:2: error: call to undeclared function 'timer_shutdown_sync'`
-  `kernel/sched/psi.c:1108:36: error: no member named 'rtpoll_timer' in 'struct psi_group'; did you mean 'poll_timer'?`
-- **Root Cause**: Upstream Linux 6.1.190 stable patch `4668ba0236a2` ("sched/psi: Fix timer shutdown in psi_cgroup_free()") assumes PREEMPT_RT / 6.2+ timer APIs (`timer_shutdown_sync` and `rtpoll_timer`) that do not exist in Google ACK 6.1. Furthermore, rawdiff modified core scheduler and memory reclaim code, violating Rule 5.
-- **Prevention**: In `build.yml` step `Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)`, immediately after rawdiff application, restore `kernel/sched/`, `kernel/cgroup/`, `mm/`, `drivers/android/`, `drivers/block/zram/`, `drivers/dma-buf/`, `fs/`, and their corresponding headers to the certified ACK baseline commit `06aabb3c55`. This maintains 100% adherence to Rule 2, Rule 5, and Rule 8.
+## Rule 14: Never Apply Upstream Linux Stable Rawdiff Directly to Google ACK
+- **Symptom**: Applying vanilla Linux stable rawdiff (e.g. `v6.1.177..v6.1.190`) from kernel.org onto Google Android Common Kernel (ACK) causes cascading compiler errors across multiple subsystems:
+  1. `kernel/sched/psi.c: error: call to undeclared function 'timer_shutdown_sync'` and `no member named 'rtpoll_timer'`
+  2. `include/linux/cma.h: error: redefinition of 'cma_allocator_trace_init'`
+  3. `include/linux/writeback.h: note: previous declaration is here`
+  4. Hunk rejections in `net/ipv4/sysctl_net_ipv4.c`
+- **Root Cause**: Google ACK maintains Android-specific KMI vendor hooks (`android_vh_*`), custom tracepoints, and specific scheduler/memory interfaces that diverge from vanilla kernel.org Linux. Vanilla upstream point-releases (like 6.1.178–6.1.190) do not contain Android KMI adaptations until Google's ACK team merges and validates them on `refs/heads/android14-6.1`. Furthermore, 6.1.178..190 point releases contain no new user features or Qualcomm Snapdragon 8 Gen 3 (SM8650) fixes.
+- **Prevention**: Never force rawdiff from kernel.org onto Google ACK. Always track official Google ACK tags/branches (`android14-6.1`), and build upon the certified verified baseline commit `06aabb3c55` + stock DRM pin `0c3d559bcd85` (Release 8).
+

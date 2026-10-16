@@ -166,37 +166,18 @@ jobs:
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
         set -euo pipefail
-        echo "[+] Aligning 6.1-lts source with Google ACK android14-6.1 and Linux 6.1.190 LTS..."
+        echo "[+] Aligning 6.1-lts source with Google ACK android14-6.1 and certified houji baseline..."
 
-        # 1. Base tree: Google ACK android14-6.1 pinned to verified working commit 06aabb3c55
-        # (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks before breaking f2fs zoned device commits)
+        # 1. Base tree: Google ACK android14-6.1 pinned to certified baseline commit 06aabb3c55
+        # (Linux 6.1.177 LTS + full ANDROID: GKI vendor hooks before breaking f2fs zoned device commits)
         ACK_177_COMMIT="06aabb3c55412104814644e8d1b37df04940d99a"
         echo "[-] Fetching ACK android14-6.1 baseline commit $ACK_177_COMMIT..."
         if ! git fetch --no-tags https://android.googlesource.com/kernel/common "$ACK_177_COMMIT" --depth=1 2>/dev/null; then
           git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=100
         fi
-        git checkout -B lts-190-houji "$ACK_177_COMMIT"
+        git checkout -B lts-houji "$ACK_177_COMMIT"
 
-        # 2. Integrate official Linux stable v6.1.190 upstream changes from kernel.org
-        echo "[+] Downloading and applying Linux stable v6.1.177..v6.1.190 rawdiff from kernel.org..."
-        DIFF_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/rawdiff/?id=v6.1.190&id2=v6.1.177"
-        curl -fsSL "$DIFF_URL" -o /tmp/linux-6.1.177-190.patch
-        if [ -s /tmp/linux-6.1.177-190.patch ]; then
-          echo "[-] Applying 6.1.190 updates (3362 files touched, 6.05 MB diff)..."
-          patch -p1 --forward --no-backup-if-mismatch < /tmp/linux-6.1.177-190.patch 2>/dev/null || true
-          rm -f /tmp/linux-6.1.177-190.patch
-          find . -name "*.rej" -delete 2>/dev/null || true
-        else
-          echo "WARNING: Failed to download rawdiff from kernel.org"
-        fi
-        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 190/' Makefile || true
-
-        git config user.name "Antigravity Builder"
-        git config user.email "builder@antigravity.internal"
-        git add -A
-        git commit -m "Linux 6.1.190" --no-verify || true
-
-        # 3. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to stock 6.1.138 (tag android14-6.1-2025-06_r15)
+        # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to stock 6.1.138 (tag android14-6.1-2025-06_r15)
         # Xiaomi 14's prebuilt vendor display modules (msm_drm.ko, mi_disp.ko) require this exact interface.
         # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers (Rule 2).
         echo "[-] Surgically pinning display DRM/SPMI interface to stock 6.1.138 (0c3d559bcd85 / 2025-06)..."
@@ -211,44 +192,21 @@ jobs:
           include/linux/backlight.h \
           drivers/spmi/
 
-        # 4. Enforce Rules 2, 5, 8 & 14: Restore core Google ACK subsystems
-        # Upstream rawdiff contains RT/non-GKI timer_shutdown_sync in psi.c and alters memory reclaim.
-        # Restoring kernel/sched, kernel/cgroup, mm, drivers/android, drivers/block/zram, drivers/dma-buf, fs
-        # to certified baseline $ACK_177_COMMIT ensures 100% ABI and spinlock safety for Xiaomi vendor modules.
-        echo "[-] Ensuring clean Google ACK core subsystems (Rule 2, 5, 8, 14)..."
-        git checkout "$ACK_177_COMMIT" -- \
-          kernel/sched/ \
-          kernel/cgroup/ \
-          mm/ \
-          drivers/android/ \
-          drivers/block/zram/ \
-          drivers/dma-buf/ \
-          include/linux/dma-buf.h \
-          include/linux/dma-fence.h \
-          include/linux/dma-resv.h \
-          fs/ \
-          include/linux/sched.h \
-          include/linux/sched/ \
-          include/linux/psi.h \
-          include/linux/psi_types.h \
-          include/linux/f2fs_fs.h 2>/dev/null || true
-
-        # Clean any stray reject files from rawdiff
-        find . -name "*.rej" -delete 2>/dev/null || true
-
         # Prevent -Wvla build error in pinned drivers/gpu/drm
         if [ -f "Makefile" ]; then
           sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
           grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
         fi
 
+        git config user.name "Antigravity Builder"
+        git config user.email "builder@antigravity.internal"
         git add -A
-        git commit -m "houji: pin stock 6.1.138 DRM and restore pure ACK core subsystems" --no-verify || true
+        git commit -m "houji: certified Release 8 baseline (ACK 6.1.177 + stock 6.1.138 DRM)" --no-verify || true
 
         # Update environment with new aligned commit SHA
         NEW_COMMIT_SHA=$(git rev-parse HEAD)
         echo "KERNEL_SOURCE_COMMIT=$NEW_COMMIT_SHA" >> "$GITHUB_ENV"
-        echo "[+] Successfully aligned source to Linux $(make kernelversion 2>/dev/null || echo '6.1.190') (commit: $NEW_COMMIT_SHA)"
+        echo "[+] Successfully aligned source to verified baseline $(make kernelversion 2>/dev/null) (commit: $NEW_COMMIT_SHA)"
 
     - name: Set Build Timestamp from Kernel Commit
       shell: bash
