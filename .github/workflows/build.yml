@@ -211,12 +211,30 @@ jobs:
           include/linux/backlight.h \
           drivers/spmi/
 
-        # 4. Guarantee clean F2FS layout from verified working baseline (zero align_f2fs.py hack)
-        # This protects struct f2fs_sb_info layout so mi_memory.ko and mi_schedule.ko mount /data cleanly.
-        echo "[-] Ensuring clean F2FS layout from verified baseline..."
+        # 4. Enforce Rules 2, 5, 8 & 14: Restore core Google ACK subsystems
+        # Upstream rawdiff contains RT/non-GKI timer_shutdown_sync in psi.c and alters memory reclaim.
+        # Restoring kernel/sched, kernel/cgroup, mm, drivers/android, drivers/block/zram, drivers/dma-buf, fs
+        # to certified baseline $ACK_177_COMMIT ensures 100% ABI and spinlock safety for Xiaomi vendor modules.
+        echo "[-] Ensuring clean Google ACK core subsystems (Rule 2, 5, 8, 14)..."
         git checkout "$ACK_177_COMMIT" -- \
-          fs/f2fs/ \
+          kernel/sched/ \
+          kernel/cgroup/ \
+          mm/ \
+          drivers/android/ \
+          drivers/block/zram/ \
+          drivers/dma-buf/ \
+          include/linux/dma-buf.h \
+          include/linux/dma-fence.h \
+          include/linux/dma-resv.h \
+          fs/ \
+          include/linux/sched.h \
+          include/linux/sched/ \
+          include/linux/psi.h \
+          include/linux/psi_types.h \
           include/linux/f2fs_fs.h 2>/dev/null || true
+
+        # Clean any stray reject files from rawdiff
+        find . -name "*.rej" -delete 2>/dev/null || true
 
         # Prevent -Wvla build error in pinned drivers/gpu/drm
         if [ -f "Makefile" ]; then
@@ -225,7 +243,7 @@ jobs:
         fi
 
         git add -A
-        git commit -m "houji: pin stock 6.1.138 DRM and clean F2FS layout" --no-verify || true
+        git commit -m "houji: pin stock 6.1.138 DRM and restore pure ACK core subsystems" --no-verify || true
 
         # Update environment with new aligned commit SHA
         NEW_COMMIT_SHA=$(git rev-parse HEAD)

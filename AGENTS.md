@@ -127,3 +127,12 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
   `common/net/ipv4/sysctl_net_ipv4.c.rej` generated (hunk #1 failed at line 44).
 - **Root Cause**: Linux 6.1.190 upstream added `static int tcp_min_rcvbuf = 4096;` right above `sysctl_tcp_low_latency` in `net/ipv4/sysctl_net_ipv4.c`. Without fuzz tolerance (`-F 3`), GNU patch strictly rejects hunk #1 due to context line alteration even though the patch targets unrelated lines (`tcp_child_ehash_entries_max`).
 - **Prevention**: Always pass `-F 3` (e.g. `patch -p1 -F 3 < ...`) in `.github/actions/bbrv3/action.yml` and `.github/actions/droidspaces/action.yml` so GNU patch cleanly tolerates up to 3 lines of upstream context drift.
+
+---
+
+## Rule 14: Restore Core ACK Subsystems (`kernel/sched/`, `mm/`, `fs/`, `dma-buf`) After Rawdiff on 6.1.190
+- **Symptom**: Bazel fails during `//common:kernel_aarch64` with:
+  `kernel/sched/psi.c:1108:2: error: call to undeclared function 'timer_shutdown_sync'`
+  `kernel/sched/psi.c:1108:36: error: no member named 'rtpoll_timer' in 'struct psi_group'; did you mean 'poll_timer'?`
+- **Root Cause**: Upstream Linux 6.1.190 stable patch `4668ba0236a2` ("sched/psi: Fix timer shutdown in psi_cgroup_free()") assumes PREEMPT_RT / 6.2+ timer APIs (`timer_shutdown_sync` and `rtpoll_timer`) that do not exist in Google ACK 6.1. Furthermore, rawdiff modified core scheduler and memory reclaim code, violating Rule 5.
+- **Prevention**: In `build.yml` step `Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)`, immediately after rawdiff application, restore `kernel/sched/`, `kernel/cgroup/`, `mm/`, `drivers/android/`, `drivers/block/zram/`, `drivers/dma-buf/`, `fs/`, and their corresponding headers to the certified ACK baseline commit `06aabb3c55`. This maintains 100% adherence to Rule 2, Rule 5, and Rule 8.
