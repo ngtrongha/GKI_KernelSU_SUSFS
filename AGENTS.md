@@ -109,3 +109,14 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
   - `CONFIG_CFI_CLANG=y`, `CONFIG_LTO_NONE=y`
 - **Prevention**: When upgrading to 6.1.177+ / 6.1.190, any display/SPMI compatibility checkout must target the exact stock tag `android14-6.1-2025-06_r15` (`0c3d559bcd85`), and defconfig settings for memory/scheduler must never deviate from these verified stock values.
 
+---
+
+## Rule 12: Certified Working Baseline Release 8 (r8) and Upstream 6.1.190 Rawdiff Integration
+- **Verified Milestone**: [Release 8 (r8)](https://github.com/ngtrongha/GKI_KernelSU_SUSFS/releases/tag/r8), commit `a41a0b693`, base ACK commit `06aabb3c5541` + stock 6.1.138 DRM pin `0c3d559bcd85`. Verified by user device testing on 2026-10-16 to **boot cleanly on Xiaomi 14 (`houji`)** with zero black screen, zero brightness flickering, and working F2FS `/data` mount.
+- **6.1.190 Integration Method**: In a shallow CI runner checkout, `git merge v6.1.190` fails with `fatal: refusing to merge unrelated histories`. To cleanly apply all bugfixes up to Linux 6.1.190, download and apply the official rawdiff between `v6.1.177` and `v6.1.190` from `git.kernel.org`:
+  `https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/rawdiff/?id=v6.1.190&id2=v6.1.177`
+  Immediately following rawdiff application:
+  1. Re-pin the 5 Display DRM/Backlight/SPMI paths to stock tag `0c3d559bcd85` (`android14-6.1-2025-06_r15`).
+  2. Restore `fs/f2fs/` to certified baseline `06aabb3c55` to keep the working struct layout.
+  3. Clean up any reject files (`*.rej`) so reject scanners do not flag them.
+

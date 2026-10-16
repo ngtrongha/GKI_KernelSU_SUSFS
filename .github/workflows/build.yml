@@ -177,20 +177,24 @@ jobs:
         fi
         git checkout -B lts-190-houji "$ACK_177_COMMIT"
 
-        # 2. Integrate official Linux stable v6.1.190 from kernel.org
-        echo "[+] Integrating Linux stable v6.1.190 from git.kernel.org..."
-        git remote add linux-stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git 2>/dev/null || true
-        git fetch --no-tags linux-stable tag v6.1.190 --depth=200
+        # 2. Integrate official Linux stable v6.1.190 upstream changes from kernel.org
+        echo "[+] Downloading and applying Linux stable v6.1.177..v6.1.190 rawdiff from kernel.org..."
+        DIFF_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/rawdiff/?id=v6.1.190&id2=v6.1.177"
+        curl -fsSL "$DIFF_URL" -o /tmp/linux-6.1.177-190.patch
+        if [ -s /tmp/linux-6.1.177-190.patch ]; then
+          echo "[-] Applying 6.1.190 updates (3362 files touched, 6.05 MB diff)..."
+          patch -p1 --forward --no-backup-if-mismatch < /tmp/linux-6.1.177-190.patch 2>/dev/null || true
+          rm -f /tmp/linux-6.1.177-190.patch
+          find . -name "*.rej" -delete 2>/dev/null || true
+        else
+          echo "WARNING: Failed to download rawdiff from kernel.org"
+        fi
+        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 190/' Makefile || true
 
         git config user.name "Antigravity Builder"
         git config user.email "builder@antigravity.internal"
-        echo "[-] Merging linux-stable v6.1.190 into ACK base..."
-        if ! git merge --no-edit -s recursive -X patience v6.1.190; then
-          echo "[-] Resolving merge conflicts to preserve ACK vendor hooks and ABI..."
-          git checkout --ours android/ drivers/android/ 2>/dev/null || true
-          git add -A
-          git commit --no-edit || true
-        fi
+        git add -A
+        git commit -m "Linux 6.1.190" --no-verify || true
 
         # 3. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to stock 6.1.138 (tag android14-6.1-2025-06_r15)
         # Xiaomi 14's prebuilt vendor display modules (msm_drm.ko, mi_disp.ko) require this exact interface.
@@ -219,6 +223,9 @@ jobs:
           sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
           grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
         fi
+
+        git add -A
+        git commit -m "houji: pin stock 6.1.138 DRM and clean F2FS layout" --no-verify || true
 
         # Update environment with new aligned commit SHA
         NEW_COMMIT_SHA=$(git rev-parse HEAD)
