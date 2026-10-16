@@ -213,21 +213,3 @@ runs:
           sed -i 's/extern struct selinux_state \*fake_state;/struct selinux_state *fake_state __attribute__((weak)) = NULL;/' security/selinux/selinuxfs.c || true
         fi
 
-    - name: Xiaomi 14 (houji 8GB RAM) Lock-Safe Official gki_defconfig Options
-      if: inputs.kernel_version == '6.1'
-      uses: ./.github/actions/set-kernel-config
-      with:
-        config_list: |
-          CONFIG_LRU_GEN=y
-          CONFIG_LRU_GEN_ENABLED=y
-          # CONFIG_ZRAM_DEF_COMP_LZ4 is not set
-          CONFIG_ZRAM_DEF_COMP_ZSTD=y
-          CONFIG_CRYPTO_ZSTD=y
-          CONFIG_FUSE_PASSTHROUGH=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_TRANSPARENT_HUGEPAGE=y
-          CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
-          # CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS is not set
-          # CONFIG_DAMON_RECLAIM is not set
-
