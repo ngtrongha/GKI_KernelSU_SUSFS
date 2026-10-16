@@ -160,15 +160,38 @@ jobs:
         kernel_version: ${{ inputs.kernel_version }}
         os_patch_level: ${{ inputs.os_patch_level }}
 
-    - name: Align 6.1-LTS Source with ACK android14-6.1 HEAD
+    - name: Surgical 6.1-LTS Source Alignment for Xiaomi 14 (houji)
       if: inputs.kernel_version == '6.1' && inputs.os_patch_level == 'lts'
       shell: bash
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
         set -euo pipefail
-        echo "[+] Aligning 6.1-lts source with 100% pure Google ACK android14-6.1 HEAD (Linux 6.1.177+ LTS + full vendor hooks)..."
-        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
-        git checkout -B lts-177-ack FETCH_HEAD
+        echo "[+] Aligning 6.1-lts source with verified working ACK android14-6.1 commit 06aabb3c55 (Linux 6.1.177 LTS + vendor hooks)..."
+        # 1. Base tree: Google ACK android14-6.1 pinned to verified working commit 06aabb3c55
+        # (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks before breaking f2fs zoned device commits)
+        ACK_177_COMMIT="06aabb3c55412104814644e8d1b37df04940d99a"
+        if ! git fetch --no-tags https://android.googlesource.com/kernel/common "$ACK_177_COMMIT" --depth=1 2>/dev/null; then
+          git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=100
+        fi
+        git checkout -B lts-177-ack "$ACK_177_COMMIT"
+
+        # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
+        # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers; splitting dma-buf between
+        # 6.1.177 and 6.1.138 causes a black screen right after the boot logo when SurfaceFlinger starts.
+        echo "[-] Surgically pinning display DRM/SPMI interface to deprecated/android14-6.1-2025-06 (6.1.138)..."
+        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/deprecated/android14-6.1-2025-06 --depth=1
+        git checkout FETCH_HEAD -- \
+          drivers/gpu/drm/ \
+          include/drm/ \
+          drivers/video/backlight/ \
+          include/linux/backlight.h \
+          drivers/spmi/
+
+        # Prevent -Wvla build error in pinned drivers/gpu/drm
+        if [ -f "Makefile" ]; then
+          sed -i 's/-Wvla/-Wno-vla/g' Makefile || true
+          grep -q -- "-Wno-vla" Makefile || sed -i '/KBUILD_CFLAGS/ s/$/ -Wno-vla -Wno-error=vla/' Makefile || true
+        fi
 
     - name: Set Build Timestamp from Kernel Commit
       shell: bash

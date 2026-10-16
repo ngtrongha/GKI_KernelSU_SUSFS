@@ -89,8 +89,8 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
 
 ---
 
-## Rule 10: Never Frankenstein-Pin `drivers/gpu/drm/` from 6.1.138 onto 6.1.177+
-- **Symptom**: Kernel passes `kmi_check.py` (0 CRC mismatches), compiles cleanly, flashes via AnyKernel3, shows Xiaomi boot logo, then goes to a black screen and automatically reboots after 5–10 seconds.
-- **Root Cause**: Linux upstream modified 210+ files in `drivers/gpu/drm/` between 6.1.138 and 6.1.177, rewriting `drm/scheduler` fence callbacks (`drm_sched_entity_kill_jobs_work`) and `spsc_queue.h` memory barriers. Overwriting `drivers/gpu/drm/` from 6.1.138 onto 6.1.177 creates an internal locking and fence deadlock with 6.1.177's `drivers/dma-buf/` when SurfaceFlinger / `msm_drm.ko` initializes display buffers, causing the Qualcomm hardware watchdog to bite and force an automatic reboot.
-- **Prevention**: Run 100% pure, unadulterated Google ACK `refs/heads/android14-6.1` HEAD without pinning `drivers/gpu/drm/` or hacking `fs/f2fs/`.
+## Rule 10: Always Pin `drivers/gpu/drm/` to 6.1.138 on Xiaomi 14 (`houji`) 6.1-LTS
+- **Symptom**: Kernel passes `kmi_check.py` (0 CRC mismatches), compiles cleanly, flashes via AnyKernel3, shows Xiaomi boot logo, then goes to a persistent **BLACK SCREEN**.
+- **Root Cause**: Xiaomi 14's prebuilt vendor display modules (`msm_drm.ko` and `mi_disp.ko`) were compiled by Xiaomi against kernel 6.1.138. Linux 6.1.177 upstream made breaking internal changes to atomic display plane check callbacks and CRTC timing helpers. Running pure 6.1.177 DRM causes `msm_drm.ko` to fail display panel probe/modeset, leaving the screen completely blank (black screen).
+- **Prevention**: Always surgically pin the 5 Display DRM and Backlight paths (`drivers/gpu/drm/`, `include/drm/`, `drivers/video/backlight/`, `include/linux/backlight.h`, and `drivers/spmi/`) to `refs/heads/deprecated/android14-6.1-2025-06` (`6.1.138`) while keeping `drivers/dma-buf/` on 6.1.177 and base ACK on verified commit `06aabb3c55`.
 
