@@ -1,111 +1,113 @@
 <div align="center">
 
-# Wild Kernels for Android devices running GKI 2.0 (5.10+)
+# HNHouji Kernel — Xiaomi 14 (houji) & Android GKI 2.0
+
+Hardened, hardware-safe Android Generic Kernel Image (GKI 2.0) built on **Google ACK 6.1 LTS**, engineered specifically for **Xiaomi 14 (`houji` / SM8650 `pineapple`)** running HyperOS, with full generic GKI compatibility.
 
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Third-Party Notices](https://img.shields.io/badge/notices-THIRD__PARTY_NOTICES-lightgrey.svg)](THIRD_PARTY_NOTICES.md)
+[![Kernel Base](https://img.shields.io/badge/Google%20ACK-6.1%20LTS-brightgreen.svg)](https://android.googlesource.com/kernel/common/+/refs/heads/android14-6.1)
+[![KernelSU-Next](https://img.shields.io/badge/Root-KernelSU--Next-orange.svg)](https://github.com/KernelSU-Next/KernelSU-Next)
+[![SUSFS](https://img.shields.io/badge/Hide-SUSFS%20v2.3.0-purple.svg)](https://gitlab.com/simonpunk/susfs4ksu)
+[![Device Verified](https://img.shields.io/badge/Xiaomi%2014-Tested%20%26%20Verified%20(r8)-success.svg)](https://github.com/ngtrongha/GKI_KernelSU_SUSFS/releases/tag/r8)
 
 </div>
 
 > [!CAUTION]
-> Wild Kernels is not responsible for bricked devices or damage. By flashing, you assume all risk. Back up your data and understand the risks before flashing.
+> Modifying your kernel carries inherent risks. While HNHouji is engineered with strict hardware shields and verified against device baselines, you assume all risk by flashing. Always backup your `boot` partition before flashing.
 
 ---
 
-## About
+## Highlights: Xiaomi 14 Hardware Shielding
 
-Generic kernels built on [Google's GKI sources](https://android.googlesource.com/kernel/common/) with KernelSU and SUSFS for root hiding and detection evasion — broad compatibility, not guaranteed for every device.
+Standard upstream GKI kernels often suffer from black screens, screen flickering, or bootloops on Xiaomi 14 due to proprietary vendor module expectations. HNHouji implements targeted hardware shielding:
+
+- 🛡️ **Zero Black Screen Guarantee**: Surgically pins Display DRM (`drivers/gpu/drm/`, `include/drm/`), Backlight (`drivers/video/backlight/`, `include/linux/backlight.h`), and SPMI (`drivers/spmi/`) to stock 6.1.138 baseline (`0c3d559bcd85`). Matches Xiaomi's prebuilt vendor display modules (`msm_drm.ko`, `mi_disp.ko`) with 100% binary ABI compatibility.
+- 👁️ **LTPO & Brightness Flicker Elimination**: Fixes VBlank and MIPI-DSI `0x51` brightness modulation timing shifts introduced in post-6.1.138 upstream ACK, providing butter-smooth 1–120 Hz LTPO refresh and stable low-light brightness.
+- 💾 **F2FS `/data` Mount Integrity**: Aligns struct layout in `fs/f2fs/f2fs.h` so Xiaomi's vendor memory hooks (`mi_ext_lru.ko`, `mi_memory.ko`) mount encrypted `/data` partitions cleanly without panics.
+- 🔔 **Xiaomi 14 Notification Keeper**: Bundled AnyKernel3 auto-installer deploys `houji-notification-helper.sh` into `/data/adb/service.d/` to exempt Google Play Services from aggressive Xiaomi Greezer freezing and keep FCM TCP 5228 push notifications alive.
+- ⚡ **Pure Google ACK Stability**: Built strictly upon official Google Android Common Kernel `android14-6.1` LTS sources without unsafe memory reclaim hacks or PSI dampening that could lead to deadlocks.
 
 ---
 
-## Features
+## Core Features
 
-- **KernelSU / KernelSU-Next / ReSukiSU** — root implementations
-- **susfs4ksu** — root hiding (incl. Ptrace Leak Fix, Unicode Fix)
-- **NoMount / Mountify** — mount metamodules
-- **Baseband Guard** — partition protection
-- **Networking** — WireGuard, BBR, IPSet, CIFS
-- **TMPFS** — xattr / POSIX ACLs
-- **BPF** — BTF / eBPF / FUSE-BPF
-- **Performance** — incl. NTSync
-- **DroidSpaces** — container runtime
+### Root & Detection Evasion
+- **KernelSU-Next**: Latest dev-susfs branch with full root isolation and app profile management.
+- **SUSFS v2.3.0**: Advanced kernel-level root hiding:
+  - Mount namespace isolation (KSU / Magisk / APatch invisible to detection apps).
+  - Ptrace leak protection and Unicode path obfuscation.
+- **NoMount / Mountify**: Full compatibility with modern systemless metamodules.
 
-> [!TIP]
-> Full documentation: [Wiki](https://github.com/WildKernels/GKI_KernelSU_SUSFS/wiki)
+### Security & Hardware Protection
+- **Baseband Guard (BBG)**: Prevents accidental overwriting or corruption of critical radio, modem, and EFS NVRAM partitions.
+- **Weak Fake SELinux State**: Zero link-time symbol conflicts with root managers.
+
+### Networking & Performance
+- **BBRv3 TCP**: Google BBR v3 congestion control for lower latency and improved throughput over cellular/Wi-Fi.
+- **WireGuard & IPSet**: In-kernel WireGuard VPN and fast packet filtering.
+- **NTSync**: High-performance Windows NT synchronization primitives for Wine, Proton, and Box64/FEX gaming.
+- **Modern Observability**: BTF, eBPF, and FUSE-BPF enabled out of the box.
+- **DroidSpaces-OSS**: Full kernel container runtime support.
+
+---
+
+## Installation Guide
+
+### Recommended: Kernel Flasher (Rooted)
+1. Download the latest `AnyKernel3.zip` (e.g., `6.1.177-android14-lts-KernelSU-Next-AnyKernel3.zip`) from [Releases](https://github.com/ngtrongha/GKI_KernelSU_SUSFS/releases).
+2. Open **[Kernel Flasher](docs/kernelflasher.md)** on your device.
+3. Backup your existing `boot` partition (or have a stock `boot.img` handy).
+4. Select the downloaded AnyKernel3 zip and flash.
+5. Reboot.
+
+### Alternative: Custom Recovery (TWRP / OrangeFox)
+1. Boot into TWRP or OrangeFox recovery.
+2. Flash the `AnyKernel3.zip` directly.
+3. Reboot to system.
+
+For step-by-step guides, see:
+- [Installation Overview](docs/installation.md)
+- [Kernel Flasher Guide](docs/kernelflasher.md)
+- [Magiskboot Manual Patching](docs/magiskboot.md)
+- [Post-Install Verification](docs/post-install.md)
+
+---
+
+## Verified Baseline
+
+- **Hardware**: Xiaomi 14 (`houji`, Snapdragon 8 Gen 3 / SM8650 `pineapple`).
+- **Firmware Tested**: HyperOS `OS3.0.307.0.WNCCNXM` (patch level 2026-08-01).
+- **Verified Working Milestone**: [Release 8 (r8)](https://github.com/ngtrongha/GKI_KernelSU_SUSFS/releases/tag/r8) — 0% black screen, 0% LTPO flicker, clean F2FS mount.
+- **Default Pipeline**: Google ACK 6.1 LTS branch (`android14-6.1`) with verified DRM/SPMI pin.
 
 ---
 
 ## Build Your Own Kernel
 
-Fork the repository and follow **[Build Your Own Kernel](docs/build-from-fork.md)** to select one kernel family, patch level, root implementation, and feature set in GitHub Actions.
+You can trigger a custom build directly in GitHub Actions:
+1. Navigate to the **Actions** tab in this repository.
+2. Select **Build Kernel (CI)**.
+3. Click **Run workflow** with your preferred inputs:
+   - **Kernel Version**: `6.1`
+   - **OS Patch Level**: `lts` (Google ACK LTS — Recommended)
+   - **Root Flavor**: `KernelSU-Next`
+   - **Feature Set**: `All` (or custom subset)
+4. Download the generated `AnyKernel3.zip` from the workflow summary or releases.
+
+For custom forks and full configuration options, refer to [Build From Fork](docs/build-from-fork.md).
 
 ---
 
-## Installation
+## Special Thanks & Credits
 
-See **[Installation Guide](https://github.com/WildKernels/GKI_KernelSU_SUSFS/wiki/Installation)**.
+This project stands on the shoulders of incredible open-source developers:
 
----
-
-## Our Projects
-
-| Device | Repository | Description |
-|--------|------------|-------------|
-| **Multi** | [GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) | Google GKI sources — built to be generic and work across many devices |
-| **Pixel** | [Sultan_KernelSU_SUSFS](https://github.com/WildKernels/Sultan_KernelSU_SUSFS) | Custom kernels for specific Pixel devices — built from Sultan sources |
-| **Samsung** | [Samsung_KernelSU_SUSFS](https://github.com/WildKernels/Samsung_KernelSU_SUSFS) | Built from Samsung sources and manifest |
-| **OnePlus** | [OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS) | Built from OnePlus sources and manifest |
-
----
-
-## Special Thanks
-
-**These amazing people and projects make this possible:**
-
+- **Google Android Common Kernel (ACK)** — Upstream LTS foundation
 - **KernelSU** — [tiann](https://github.com/tiann/KernelSU)
-- **KernelSU-Next** — [rifsxd](https://github.com/KernelSU-Next/KernelSU-Next)
-- **KernelSU-Next SUSFS Fork** — [pershoot](https://github.com/pershoot/KernelSU-Next)
-- **ReSukiSU** — [ReSukiSU](https://github.com/ReSukiSU/ReSukiSU)
-- **Magic-KSU** — [5ec1cff](https://github.com/5ec1cff/KernelSU)
-- **SUSFS** — [simonpunk](https://gitlab.com/simonpunk/susfs4ksu)
-- **SUSFS Module** — [sidex15](https://github.com/sidex15)
+- **KernelSU-Next** — [rifsxd](https://github.com/KernelSU-Next/KernelSU-Next) & [pershoot](https://github.com/pershoot/KernelSU-Next)
+- **SUSFS** — [simonpunk](https://gitlab.com/simonpunk/susfs4ksu) & [sidex15](https://github.com/sidex15)
 - **NoMount** — [maxsteeel](https://github.com/maxsteeel/nomount)
+- **Baseband Guard** — [vc-teahouse](https://github.com/vc-teahouse/Baseband-guard)
+- **AnyKernel3** — [osm0sis](https://github.com/osm0sis/AnyKernel3) & [WildKernels](https://github.com/WildKernels)
 - **DroidSpaces-OSS** — [ravindu644](https://github.com/ravindu644/Droidspaces-OSS)
-- **Baseband-guard (BBG)** — [vc-teahouse](https://github.com/vc-teahouse/Baseband-guard)
-- **Kernel Patches** — [WildKernels/kernel_patches](https://github.com/WildKernels/kernel_patches)
-- **AnyKernel3** — [osm0sis](https://github.com/osm0sis/AnyKernel3)
-- **Sultan Kernels (Pixel)** — [kerneltoast](https://github.com/kerneltoast)
-- **Device Boot Fix** — [Boot fix commit](https://github.com/Anything-at-25-00/android_kernel_common_android12-5.10/commit/2476d262b597fe8af82cfb7aaf96676f51c6b4ed)
-
-**Contributors to this repository:**
-
-[![Contributors](https://contrib.rocks/image?repo=WildKernels/GKI_KernelSU_SUSFS)](https://github.com/WildKernels/GKI_KernelSU_SUSFS/graphs/contributors)
-
-Have an idea or improvement in mind? Contributions are always welcome — feel free to open a pull request or share your thoughts!
-
----
-
-## Community
-
-<div align="center">
-
-[![Telegram Group](https://img.shields.io/badge/Telegram-%40WildKernelsTG-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/WildKernelsTG)
-[![Telegram DM](https://img.shields.io/badge/Telegram-%40TheWildJames-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/TheWildJames)
-
-</div>
-
-Need help? Open an issue in this repository or reach out on Telegram. Please ask in the [WildKernelsTG group](https://t.me/WildKernelsTG) first for general issues. DMs to [@TheWildJames](https://t.me/TheWildJames) are always open — use for priority / very important, or if you just want to talk and learn.
-
----
-
-## Donations
-
-> [!IMPORTANT]
-> **Kind note:** A donation is truly just a gift — not a payment for support, features, or priority. It doesn't unlock anything extra on our side and doesn't change how we help you; everyone gets the same community support whether you donate or not. Think of it as a kind “thank you” to help keep development going — not a transaction. If you do choose to give, we're genuinely grateful, but please never feel obligated.
-
-- PayPal: [bauhd@outlook.com](mailto:bauhd@outlook.com)
-- Card: <https://buy.stripe.com/5kQ28sdi08Nr0Xc2fU5os00>
-- LTC: `MVaN1ToSuks2cdK9mB3M8EHCfzQSyEMf6h`
-- BTC: `3BBXAMS4ZuCZwfbTXxWGczxHF4isymeyxG`
-- ETH: `0x2b9C846c84d58717e784458406235C09a834274e`
-- Patreon: <https://patreon.com/WildKernels>
+- **NTSync & BBRv3** — Upstream Linux Kernel contributors

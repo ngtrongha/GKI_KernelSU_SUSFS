@@ -741,26 +741,11 @@ jobs:
           fi
         } > "$SUMMARY_FILE"
 
-    - name: Package Xiaomi 14 Notification Helper in AnyKernel3
-      if: inputs.kernel_version == '6.1'
+    - name: Configure and Brand AnyKernel3 for HNHouji
       shell: bash
       run: |
-        if [ -f "${{ github.workspace }}/scripts/houji-notification-helper.sh" ] && [ -d "${{ github.workspace }}/AnyKernel3" ]; then
-          cp "${{ github.workspace }}/scripts/houji-notification-helper.sh" "${{ github.workspace }}/AnyKernel3/"
-          chmod +x "${{ github.workspace }}/AnyKernel3/houji-notification-helper.sh" || true
-          if [ -f "${{ github.workspace }}/AnyKernel3/anykernel.sh" ]; then
-            {
-              echo ""
-              echo "# Xiaomi 14 (houji) notification service helper auto-install"
-              echo 'if [ -f "$home/houji-notification-helper.sh" ]; then'
-              echo '  ui_print "Installing Xiaomi 14 notification keeper..."'
-              echo '  mkdir -p /data/adb/service.d'
-              echo '  cp -f "$home/houji-notification-helper.sh" /data/adb/service.d/houji-notification-helper.sh'
-              echo '  chmod 755 /data/adb/service.d/houji-notification-helper.sh'
-              echo 'fi'
-            } >> "${{ github.workspace }}/AnyKernel3/anykernel.sh"
-          fi
-          echo "[-] Packaged and wired houji-notification-helper.sh into AnyKernel3 zip"
+        if [ -f "${{ github.workspace }}/scripts/customize-anykernel3.sh" ]; then
+          bash "${{ github.workspace }}/scripts/customize-anykernel3.sh" "${{ github.workspace }}/AnyKernel3" "${{ inputs.kernel_version }}"
         fi
 
     - name: Upload Artifacts
