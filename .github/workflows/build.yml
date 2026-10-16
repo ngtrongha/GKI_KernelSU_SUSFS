@@ -172,29 +172,7 @@ jobs:
         git checkout -B lts-177-ack FETCH_HEAD
 
         # 2. Align F2FS struct ABI layout for Xiaomi HyperOS vendor module compatibility (Zero Black Screen)
-        # Google's new zoned device commits inserted 3 fields into struct f2fs_mount_info and struct f2fs_sb_info,
-        # which shifts iostat_lock / iostat_io_lat accessed by Xiaomi's prebuilt mi_ext_lru.ko / mi_memory.ko.
-        # Relocate those 3 fields to the end of struct f2fs_sb_info to preserve 100% ABI offset compatibility.
-        python3 -c '
-with open("fs/f2fs/f2fs.h", "r") as f:
-    c = f.read()
-if "unsigned int resizable_tail_secno;" in c:
-    c = c.replace("\tunsigned int resizable_tail_secno;\t/* number of resizable tail sections */\n", "")
-    c = c.replace("\tunsigned int first_seq_zone_segno;\t/* first segno in sequential zone */\n", "")
-    c = c.replace("\tunsigned int pinned_area_max_secno;\t/* upper bound section for pinned files */\n", "")
-    target = "\tstruct iostat_lat_info *iostat_io_lat;\n#endif\n};"
-    replacement = "\tstruct iostat_lat_info *iostat_io_lat;\n#endif\n\t/* ABI pad for Xiaomi vendor modules */\n\tunsigned int first_seq_zone_segno;\n\tunsigned int pinned_area_max_secno;\n\tunsigned int resizable_tail_secno;\n};"
-    if target in c:
-        c = c.replace(target, replacement)
-        with open("fs/f2fs/f2fs.h", "w") as f:
-            f.write(c)
-        with open("fs/f2fs/super.c", "r") as f:
-            s = f.read()
-        s = s.replace("F2FS_OPTION(sbi).resizable_tail_secno", "sbi->resizable_tail_secno")
-        with open("fs/f2fs/super.c", "w") as f:
-            f.write(s)
-        print("[+] F2FS struct layout successfully aligned for Xiaomi HyperOS vendor modules!")
-' || true
+        python3 "${{ github.workspace }}/.github/scripts/align_f2fs.py" || true
 
         # 3. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
         # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers; splitting dma-buf between
