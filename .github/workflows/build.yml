@@ -167,9 +167,13 @@ jobs:
       run: |
         set -euo pipefail
         echo "[+] Aligning 6.1-lts source with ACK android14-6.1 (6.1.177 LTS + vendor hooks)..."
-        # 1. Base tree: latest Google ACK android14-6.1 (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks)
-        git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=1
-        git checkout -B lts-177-ack FETCH_HEAD
+        # 1. Base tree: Google ACK android14-6.1 pinned to verified working commit 06aabb3c55
+        # (Linux 6.1.177 LTS + ANDROID: GKI vendor hooks before breaking f2fs zoned device commits)
+        ACK_177_COMMIT="06aabb3c55412104814644e8d1b37df04940d99a"
+        if ! git fetch --no-tags https://android.googlesource.com/kernel/common "$ACK_177_COMMIT" --depth=1 2>/dev/null; then
+          git fetch --no-tags https://android.googlesource.com/kernel/common refs/heads/android14-6.1 --depth=100
+        fi
+        git checkout -B lts-177-ack "$ACK_177_COMMIT"
 
         # 2. Surgically pin ONLY the ~2% Display DRM & SPMI PMIC interface to certified 6.1.138 (2025-06)
         # Note: Do NOT pin drivers/dma-buf/ or dma-fence/dma-resv headers; splitting dma-buf between

@@ -68,3 +68,21 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
 - **Never** add `-fno-plt` to `KBUILD_CFLAGS` (causes `RELA 311` error in `kvm_nvhe`).
 - **Always** append `-Wno-vla -Wno-error=vla` to `Makefile` when building pinned `drivers/gpu/drm/`.
 - **Always** convert `extern struct selinux_state *fake_state;` in `security/selinux/selinuxfs.c` to `struct selinux_state *fake_state __attribute__((weak)) = NULL;` so ReSukiSU builds do not fail with `ld.lld: error: undefined symbol: fake_state`.
+
+---
+
+## Rule 8: Always Pin Base ACK Tree for `6.1-lts` to Verified Working Commit `06aabb3c55` (Never Blindly Pull `refs/heads/android14-6.1` HEAD)
+- **Symptom**: Kernel passes `kmi_check.py` (0 CRC mismatches), compiles cleanly, flashes via AnyKernel3, shows Xiaomi boot logo, and then **immediately goes to a black screen**.
+- **Root Cause**: On Oct 15, 2026 at 21:55 UTC, Google ACK upstream pushed 27 commits modifying `fs/f2fs/` (`a465432321`, `745bced530`, etc.) that inserted `resizable_tail_secno`, `first_seq_zone_segno`, and `pinned_area_max_secno` into `struct f2fs_mount_info` and `struct f2fs_sb_info` in `fs/f2fs/f2fs.h`. Because `fs/f2fs/` internal struct layouts are not tracked by GKI KMI symbol CRCs, `kmi_check.py` passed with 0 mismatches, but Xiaomi 14's prebuilt vendor modules hooking `trace_android_vh_f2fs_iostat_*` dereferenced shifted struct offsets when `init` mounted `/data` (`f2fs`), crashing/hanging the device into an immediate black screen right after the bootloader logo.
+- **Prevention**: In `.github/workflows/build.yml`, pin the base ACK tree for `6.1-lts` to verified working commit `06aabb3c55412104814644e8d1b37df04940d99a` (`refs/heads/android14-6.1` before the breaking f2fs commits) instead of unpinned `refs/heads/android14-6.1` HEAD.
+
+---
+
+## Rule 9: Handle Single-Artifact Extraction in GitHub Actions `download-artifact` Verification
+- **Symptom**: The `release` job fails at step `Verify all AnyKernel3 artifacts downloaded` with:
+  ```
+  ERROR: failed to re-fetch 6.1.177-android14-lts-KernelSU-Next-AnyKernel3
+  expected an array but got: object ({"artifacts":[{"archive_d ...})
+  ```
+- **Root Cause**: When only a single artifact matches `pattern` across an Actions run (e.g. single-target `6.1-lts` + `KernelSU-Next`), `actions/download-artifact@v7` extracts files directly into `release-assets/` instead of `release-assets/<name>/`. Verification fails to find directory `release-assets/${name}`, attempts an API re-fetch with a broken jq query `.[0].archive_download_url`, and crashes.
+- **Prevention**: Before verification in `main.yml`, detect if a single artifact was extracted flat into `release-assets/` and wrap it into `release-assets/${single_name}/`. Use `gh run download` directly as the fallback if an artifact is missing.
