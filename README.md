@@ -5,12 +5,16 @@
 Hardened, hardware-safe Android Generic Kernel Image (GKI 2.0) built on **Google ACK 6.1 LTS**, engineered specifically for **Xiaomi 14 (`houji` / SM8650 `pineapple`)** running HyperOS, with full generic GKI compatibility.
 
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+[![Upstream](https://img.shields.io/badge/based%20on-WildKernels%2FAuto--CI-blue.svg)](https://github.com/WildKernels/GKI_KernelSU_SUSFS)
 [![Kernel Base](https://img.shields.io/badge/Google%20ACK-6.1%20LTS-brightgreen.svg)](https://android.googlesource.com/kernel/common/+/refs/heads/android14-6.1)
 [![KernelSU-Next](https://img.shields.io/badge/Root-KernelSU--Next-orange.svg)](https://github.com/KernelSU-Next/KernelSU-Next)
 [![SUSFS](https://img.shields.io/badge/Hide-SUSFS%20v2.3.0-purple.svg)](https://gitlab.com/simonpunk/susfs4ksu)
 [![Device Verified](https://img.shields.io/badge/Xiaomi%2014-Tested%20%26%20Verified%20(r8)-success.svg)](https://github.com/ngtrongha/GKI_KernelSU_SUSFS/releases/tag/r8)
 
 </div>
+
+> [!NOTE]
+> **Upstream Source & Foundation**: This project is derived from and based on the automated GKI CI framework created by [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) by **TheWildJames** (Morgan Weedman), extended with specialized hardware shielding, stock DRM/SPMI compatibility pinning, F2FS memory layout alignment, and push notification services specifically engineered for **Xiaomi 14 (`houji`)**.
 
 > [!CAUTION]
 > Modifying your kernel carries inherent risks. While HNHouji is engineered with strict hardware shields and verified against device baselines, you assume all risk by flashing. Always backup your `boot` partition before flashing.
@@ -98,16 +102,26 @@ For custom forks and full configuration options, refer to [Build From Fork](docs
 
 ---
 
-## Special Thanks & Credits
+## Upstream Attribution & Special Thanks
 
-This project stands on the shoulders of incredible open-source developers:
+HNHouji is an open-source project built upon the incredible work of the Android kernel and root communities. We give full credit and sincere gratitude to:
 
-- **Google Android Common Kernel (ACK)** — Upstream LTS foundation
-- **KernelSU** — [tiann](https://github.com/tiann/KernelSU)
-- **KernelSU-Next** — [rifsxd](https://github.com/KernelSU-Next/KernelSU-Next) & [pershoot](https://github.com/pershoot/KernelSU-Next)
-- **SUSFS** — [simonpunk](https://gitlab.com/simonpunk/susfs4ksu) & [sidex15](https://github.com/sidex15)
-- **NoMount** — [maxsteeel](https://github.com/maxsteeel/nomount)
-- **Baseband Guard** — [vc-teahouse](https://github.com/vc-teahouse/Baseband-guard)
-- **AnyKernel3** — [osm0sis](https://github.com/osm0sis/AnyKernel3) & [WildKernels](https://github.com/WildKernels)
-- **DroidSpaces-OSS** — [ravindu644](https://github.com/ravindu644/Droidspaces-OSS)
-- **NTSync & BBRv3** — Upstream Linux Kernel contributors
+- **WildKernels & TheWildJames** — [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS) & [kernel_patches](https://github.com/WildKernels/kernel_patches) by **Morgan Weedman** for the foundational automated GKI CI workflow architecture and patchsets.
+- **AnyKernel3** — [osm0sis](https://github.com/osm0sis/AnyKernel3) for the universal Android ramdisk modding flasher script.
+- **Google Android Common Kernel (ACK)** — [kernel/common](https://android.googlesource.com/kernel/common/) for the upstream Android LTS kernel base.
+- **KernelSU** — [tiann](https://github.com/tiann/KernelSU) & contributors for the revolutionary kernel-based root solution.
+- **KernelSU-Next** — [rifsxd](https://github.com/KernelSU-Next/KernelSU-Next) & [pershoot](https://github.com/pershoot/KernelSU-Next) (dev-susfs fork).
+- **SUSFS** — [simonpunk](https://gitlab.com/simonpunk/susfs4ksu) & [sidex15](https://github.com/sidex15) for advanced kernel root hiding, namespace isolation, and manager modules.
+- **Root Implementations & Variants**:
+  - [ReSukiSU](https://github.com/ReSukiSU/ReSukiSU)
+  - [SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra)
+  - [KowSU](https://github.com/KOWX712/KernelSU)
+  - [Magic-KSU](https://github.com/5ec1cff/KernelSU)
+- **Security & Feature Modules**:
+  - **NoMount** — [maxsteeel](https://github.com/maxsteeel/nomount)
+  - **Baseband Guard (BBG)** — [vc-teahouse](https://github.com/vc-teahouse/Baseband-guard)
+  - **DroidSpaces-OSS** — [ravindu644](https://github.com/ravindu644/Droidspaces-OSS)
+  - **Magisk & magiskboot** — [topjohnwu](https://github.com/topjohnwu/Magisk)
+  - **Sultan Kernels (Pixel)** — [kerneltoast](https://github.com/kerneltoast)
+  - **Device Boot Fix** — [Anything-at-25-00](https://github.com/Anything-at-25-00/android_kernel_common_android12-5.10)
+  - **BBRv3 & NTSync** — Google TCP and upstream Linux kernel developers
