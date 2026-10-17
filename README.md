@@ -27,8 +27,10 @@ Standard upstream GKI kernels often suffer from black screens, screen flickering
 
 - 🛡️ **Zero Black Screen Guarantee**: Surgically pins Display DRM (`drivers/gpu/drm/`, `include/drm/`), Backlight (`drivers/video/backlight/`, `include/linux/backlight.h`), and SPMI (`drivers/spmi/`) to stock 6.1.138 baseline (`0c3d559bcd85`). Matches Xiaomi's prebuilt vendor display modules (`msm_drm.ko`, `mi_disp.ko`) with 100% binary ABI compatibility.
 - 👁️ **LTPO & Brightness Flicker Elimination**: Fixes VBlank and MIPI-DSI `0x51` brightness modulation timing shifts introduced in post-6.1.138 upstream ACK, providing butter-smooth 1–120 Hz LTPO refresh and stable low-light brightness.
-- 💾 **F2FS `/data` Mount Integrity**: Aligns struct layout in `fs/f2fs/f2fs.h` so Xiaomi's vendor memory hooks (`mi_ext_lru.ko`, `mi_memory.ko`) mount encrypted `/data` partitions cleanly without panics.
-- 🔔 **Xiaomi 14 Notification Keeper**: Bundled AnyKernel3 auto-installer deploys `houji-notification-helper.sh` into `/data/adb/service.d/` to exempt Google Play Services from aggressive Xiaomi Greezer freezing and keep FCM TCP 5228 push notifications alive.
+- 💾 **F2FS `/data` Mount Integrity**: Preserves Google ACK 6.1.177 stock F2FS struct layouts so Xiaomi's vendor memory hooks (`mi_ext_lru.ko`, `mi_memory.ko`) mount encrypted `/data` partitions cleanly without panics.
+- 🚀 **ARM64 Assembly & Memory Speedup**: Upgrades `memcmp` to a 64-byte NEON SIMD loop, adds L1 cache stream prefetching (`prfm pldl1strm`) to `memcpy`/`copy_to_user`, and applies 16-byte alignment to `clear_page`.
+- 🔋 **SM8650 S2Idle & Power Enhancements**: Eliminates spurious deep sleep wakeup loops during `s2idle` (Sultan Alsawaf fix), reduces `pm_freeze_timeout` to 2s, and trims `alarmtimer` wakelock to 100ms for minimal standby battery drain.
+- 🔔 **Xiaomi 14 Helper (`houji-notification-helper.sh`)**: Bundled AnyKernel3 auto-installer deploys runtime tuning into `/data/adb/service.d/`: exempts Google Play Services from Xiaomi Greezer, caps `sched_util_clamp_min_rt_default=0` (preventing RT tasks from pinning Cortex-X4 at max freq), optimizes ZRAM (`page-cluster=0`, `compaction_proactiveness=0`), sets UFS 4.0 `iostats=0`, and tunes F2FS sysfs.
 - ⚡ **Pure Google ACK Stability**: Built strictly upon official Google Android Common Kernel `android14-6.1` LTS sources without unsafe memory reclaim hacks or PSI dampening that could lead to deadlocks.
 
 ---
@@ -47,7 +49,8 @@ Standard upstream GKI kernels often suffer from black screens, screen flickering
 - **Weak Fake SELinux State**: Zero link-time symbol conflicts with root managers.
 
 ### Networking & Performance
-- **BBRv3 TCP**: Google BBR v3 congestion control for lower latency and improved throughput over cellular/Wi-Fi.
+- **BBRv3 TCP with Default FQ Pacing**: Google BBR v3 congestion control paired with native Fair Queuing (`CONFIG_NET_SCH_DEFAULT=y`, `CONFIG_DEFAULT_FQ=y`) for minimal bufferbloat and maximum cellular/Wi-Fi throughput.
+- **Compiler Optimization**: Built with Clang `r487747c` using `-O2` performance optimization (`CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y`).
 - **WireGuard & IPSet**: In-kernel WireGuard VPN and fast packet filtering.
 - **NTSync**: High-performance Windows NT synchronization primitives for Wine, Proton, and Box64/FEX gaming.
 - **Modern Observability**: BTF, eBPF, and FUSE-BPF enabled out of the box.

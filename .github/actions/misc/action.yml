@@ -39,4 +39,5 @@ runs:
           CONFIG_PSTORE=y
           CONFIG_PSTORE_CONSOLE=y
           CONFIG_PSTORE_RAM=y
+          CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
           

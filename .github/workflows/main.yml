@@ -126,7 +126,7 @@ on:
       use_perf:
         description: "Performance"
         type: boolean
-        default: false
+        default: true
       test_release_notes:
         description: "Render release notes preview only (skip all builds + release)"
         type: boolean

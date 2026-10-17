@@ -69,6 +69,7 @@ ui_print "  * Installer: AnyKernel3 by osm0sis"
 ui_print "  * Display DRM & SPMI: Stock 6.1.138 Shield"
 ui_print "  * Root & Hide: KernelSU-Next + SUSFS v2.3.0"
 ui_print "  * Addons: BBRv3, Baseband Guard, DroidSpaces"
+ui_print "  * Perf: ARM64 NEON/Prefetch + S2Idle + Default FQ"
 ui_print "  * Safety: 0-BlackScreen, 0-Flicker, Clean F2FS"
 ui_print "============================================"
 ui_print " "
@@ -96,13 +97,13 @@ EOF
     chmod +x "$AK3_DIR/houji-notification-helper.sh" || true
     cat << 'EOF' >> "$AK3_DIR/anykernel.sh"
 
-# Xiaomi 14 (houji) notification service helper auto-install
+# Xiaomi 14 (houji) notification & performance helper auto-install
 if [ -f "$home/houji-notification-helper.sh" ]; then
-  ui_print "  -> Installing Xiaomi 14 notification keeper..."
+  ui_print "  -> Installing Xiaomi 14 performance & notification helper..."
   mkdir -p /data/adb/service.d
   cp -f "$home/houji-notification-helper.sh" /data/adb/service.d/houji-notification-helper.sh
   chmod 755 /data/adb/service.d/houji-notification-helper.sh
-  ui_print "  -> Notification keeper installed successfully."
+  ui_print "  -> Performance & notification helper installed successfully."
 fi
 EOF
     echo "[+] Wired houji-notification-helper.sh into AnyKernel3"
