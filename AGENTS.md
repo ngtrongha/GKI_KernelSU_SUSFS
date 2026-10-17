@@ -148,3 +148,13 @@ Every time a CI build error or device runtime bug occurs, **you MUST add its sym
   2. `reduce_gc_thread_sleep_time.patch`, `f2fs_reduce_congestion.patch`, and `f2fs_enlarge_min_fsync_blocks.patch` patch `fs/f2fs/` headers and C files directly, violating Rule 5 & Rule 8.
 - **Prevention**: In `.github/actions/performance/action.yml`, always skip `file_struct_8bytes_align.patch` and all `fs/f2fs/` patches on `6.1`. Handle `min_fsync_blocks` and `gc_urgent_sleep_time` safely at runtime via sysfs in `scripts/houji-notification-helper.sh`. Only apply verified zero-KMI-impact ASM/power/memory patches (`clear_page_16bytes_align`, `optimise_memcmp`, `mem_opt_prefetch`, `avoid_extra_s2idle_wake_attempts`, `minimise_wakeup_time`, `reduce_freeze_timeout`, `int_sqrt`, `reduce_pci_pme_wakeups`, `increase_sk_mem_packets`, `silence_irq_cpu_logspam`, `silence_system_logspam`).
 
+---
+
+## Rule 16: Mandatory Upstream Review Before Merging
+- **Rule**: NEVER automatically `git merge upstream/main` or blind cherry-pick upstream commits (`WildKernels/GKI_KernelSU_SUSFS`, Google ACK, etc.) into `main`.
+- **Mandatory Procedure**:
+  1. Fetch upstream changes via `git fetch upstream main --no-tags`.
+  2. Inspect commits (`git log main..upstream/main`) and changed files (`git diff --stat main...upstream/main`).
+  3. Categorize changes (CI/workflow, Telegram, root managers/pins, kernel source, detection evasion) and evaluate potential risks or conflicts with Xiaomi 14 (`houji`) hardware shields (Rules 1–15).
+  4. Present a detailed breakdown report to the user and wait for explicit confirmation/decision before taking any merge action.
+
